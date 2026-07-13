@@ -5,7 +5,7 @@
     "location": "sibling .<target-name>.nddev-codex-backups",
     "slots": 10
   },
-  "build_version": "0.3.0",
+  "build_version": "0.3.1",
   "command_policy": {
     "json_supported": [
       "list",

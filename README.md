@@ -1,7 +1,7 @@
 # NDDev Codex Setup Manager
 
 `nddev-codex-app` is a dependency-free manager for a caller-selected Codex
-home. Version `0.3.0` installs the exact tested official Codex CLI standalone
+home. Version `0.3.1` installs the exact tested official Codex CLI standalone
 release into that target and switches one of two complete NDDev configuration
 sets without deleting unrelated target state. The repository also publishes
 the independently installable `nddev-builder` Codex marketplace.
@@ -134,11 +134,14 @@ python3 cli-tools/nddev_codex.py launch \
 
 `install-builder` invokes the target-owned pinned Codex CLI's official
 `plugin marketplace add` and `plugin add` commands with bounded output and a
-timeout. It validates the complete bounded plugin cache tree against the source,
-including the exact manifest and version, extracts only the stable marketplace/
-plugin activation into the owner-only profile, and restores the managed
-`config.toml` byte-for-byte. Failure rolls back the configuration, profile, and
-the bounded versioned cache tree to its exact prior bytes and modes;
+timeout. When a target is under the platform temporary root, it accepts only
+the exact target-bound PATH-alias warning emitted by Codex and continues to
+reject every other diagnostic. It validates the complete bounded plugin cache
+tree against the source, including the exact manifest and version, extracts
+only the stable marketplace/plugin activation into the owner-only profile, and
+restores the managed `config.toml` byte-for-byte. Failure rolls back the
+configuration, profile, and the bounded versioned cache tree to its exact prior
+bytes and modes;
 `AGENTS.md`, the setup stamp, unrelated plugins, and setup permissions remain
 unchanged.
 The profile and Codex-owned plugin cache are preserved across setup switches

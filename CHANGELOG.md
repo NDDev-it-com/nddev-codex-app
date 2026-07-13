@@ -2,6 +2,15 @@
 
 All notable changes to this project are documented here.
 
+## 0.3.1 - 2026-07-13
+
+### Fixed
+
+- Accept only the exact target-bound PATH-alias warning emitted by official
+  Codex plugin commands when `CODEX_HOME` is below the platform temporary root;
+  extra lines, altered roots, altered targets, and other diagnostics still fail
+  closed.
+
 ## 0.3.0 - 2026-07-13
 
 ### Added
