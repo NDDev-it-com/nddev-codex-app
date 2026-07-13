@@ -1,0 +1,102 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify release contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            agent.api.stepsecurity.io:443
+            api.github.com:443
+            github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify public contracts
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 -I - <<'PY'
+          import json
+          import os
+          import pathlib
+          import py_compile
+          import re
+          import tomllib
+
+          semver = re.compile(
+              r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+              r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+              r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+          )
+          version = pathlib.Path("VERSION").read_text(encoding="ascii").strip()
+          versions = {
+              os.environ["RELEASE_TAG"],
+              version,
+              json.loads(pathlib.Path("build/version.json").read_text())["build_version"],
+              json.loads(pathlib.Path("build/manifest.json").read_text())["build_version"],
+          }
+          if len(versions) != 1 or semver.fullmatch(version) is None:
+              raise SystemExit(f"release version mismatch: {sorted(versions)}")
+          expected = {
+              "safe": (":read-only", "on-request"),
+              "full-auto": (":danger-full-access", "never"),
+          }
+          for setup_id, values in expected.items():
+              config = tomllib.loads(
+                  pathlib.Path(f"setups/{setup_id}/config.toml").read_text()
+              )
+              actual = (config.get("default_permissions"), config.get("approval_policy"))
+              if set(config) != {"default_permissions", "approval_policy"} or actual != values:
+                  raise SystemExit(f"invalid permission contract for {setup_id}")
+          py_compile.compile("cli-tools/nddev_codex.py", doraise=True)
+          PY
+
+          git fetch --no-tags --force origin \
+            '+refs/heads/main:refs/remotes/origin/main'
+          tag_commit="$(git rev-parse --verify "${RELEASE_SHA}^{commit}")"
+          git merge-base --is-ancestor "$tag_commit" refs/remotes/origin/main
+
+  publish:
+    name: Publish attested immutable release
+    needs: verify
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    uses: NDDev-it-com/nddev-ci-workflows/.github/workflows/release-supply-chain.yml@8b8e3ea6321c912b68eec831c2072a0173203433 # 0.8.1
+    with:
+      version: ${{ github.ref_name }}
+      package_name: nddev-codex-app
+      archive_paths: >-
+        README.md LICENSE VERSION CHANGELOG.md SECURITY.md .gitignore .github
+        build cli-tools config setups
+      runtime_paths: >-
+        README.md LICENSE VERSION build cli-tools config setups

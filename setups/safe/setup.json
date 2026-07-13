@@ -1,0 +1,9 @@
+{
+  "description": "Read-only Codex setup with explicit approval before commands leave the conservative profile.",
+  "id": "safe",
+  "managed_files": [
+    "config.toml",
+    "AGENTS.md"
+  ],
+  "schema_version": 1
+}

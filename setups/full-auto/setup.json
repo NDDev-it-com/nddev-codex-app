@@ -1,0 +1,9 @@
+{
+  "description": "Unrestricted Codex setup for an owner-controlled environment with no approval prompts.",
+  "id": "full-auto",
+  "managed_files": [
+    "config.toml",
+    "AGENTS.md"
+  ],
+  "schema_version": 1
+}

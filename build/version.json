@@ -1,0 +1,5 @@
+{
+  "build_version": "0.1.0",
+  "python_requires": ">=3.11",
+  "schema_version": 1
+}

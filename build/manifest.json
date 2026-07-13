@@ -1,0 +1,68 @@
+{
+  "backup_policy": {
+    "canonical_target_bound": true,
+    "envelope": "NDDEV-CODEX-BACKUP.json",
+    "location": "sibling .<target-name>.nddev-codex-backups",
+    "slots": 10
+  },
+  "build_version": "0.1.0",
+  "command_policy": {
+    "json_supported": [
+      "list",
+      "status",
+      "plan",
+      "apply",
+      "switch",
+      "restore",
+      "remove"
+    ],
+    "plan_mutates": false,
+    "restore_backup_option": "--backup <0..9>",
+    "target_required": [
+      "status",
+      "plan",
+      "apply",
+      "switch",
+      "restore",
+      "remove"
+    ]
+  },
+  "entrypoint": "python3 cli-tools/nddev_codex.py",
+  "managed_files": [
+    "config.toml",
+    "AGENTS.md",
+    "NDDEV-CODEX-SETUP.json"
+  ],
+  "name": "nddev-codex-app",
+  "permission_policy": {
+    "forbidden_legacy_surfaces": [
+      "sandbox_mode",
+      "[permissions]",
+      "[profiles.*]"
+    ],
+    "setups": {
+      "full-auto": {
+        "approval_policy": "never",
+        "default_permissions": ":danger-full-access"
+      },
+      "safe": {
+        "approval_policy": "on-request",
+        "default_permissions": ":read-only"
+      }
+    },
+    "source": "setups/<id>/config.toml"
+  },
+  "schema_version": 1,
+  "setup_ids": [
+    "safe",
+    "full-auto"
+  ],
+  "source_root": "setups",
+  "transaction_policy": {
+    "lock": "exclusive sibling directory",
+    "preserve_unmanaged_files": true,
+    "reject_symlink_managed_files": true,
+    "rollback_on_failure": true,
+    "staging": "same-parent temporary directory"
+  }
+}

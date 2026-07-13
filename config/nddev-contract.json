@@ -1,0 +1,49 @@
+{
+  "contract_version": 1,
+  "description": "Portable, target-explicit setup manager for Codex configuration and repository instructions.",
+  "display_name": "NDDev Codex App",
+  "github_repository": "NDDev-it-com/nddev-codex-app",
+  "license": "AGPL-3.0-or-later",
+  "manifest_ref": "build/manifest.json",
+  "managed_state": {
+    "managed_files": [
+      "config.toml",
+      "AGENTS.md"
+    ],
+    "preserve_other_state": true,
+    "stamp_file": "NDDEV-CODEX-SETUP.json",
+    "stamp_schema": 1
+  },
+  "product_name": "nddev-codex-app",
+  "safety": {
+    "absolute_target_required": true,
+    "canonical_target_binding": true,
+    "default_target": null,
+    "explicit_target_required": [
+      "status",
+      "plan",
+      "apply",
+      "switch",
+      "restore",
+      "remove"
+    ],
+    "max_backups": 10,
+    "missing_target_argument_rejected": true,
+    "relative_target_rejected": true,
+    "rollback_on_failure": true,
+    "target_symlinks_rejected": true
+  },
+  "setup_system": {
+    "catalog_root": "setups",
+    "identity_source": "<setup>/setup.json:id",
+    "list_command": "python3 cli-tools/nddev_codex.py list [--json]",
+    "selection_option": "--setup <id>",
+    "setup_ids": [
+      "safe",
+      "full-auto"
+    ],
+    "status_command": "python3 cli-tools/nddev_codex.py status --target <absolute-dir> [--json]"
+  },
+  "source_root": "setups",
+  "version_ref": "build/version.json"
+}
