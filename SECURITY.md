@@ -2,9 +2,10 @@
 
 ## Supported surface
 
-Security reporting covers the setup catalog, the lifecycle CLI, public
-contracts, documentation, and GitHub workflows in this repository. Only the
-latest numeric release is supported.
+Security reporting covers the setup catalog, target-owned Codex CLI installer,
+lifecycle CLI, upstream desktop-bridge delegation, public contracts,
+documentation, and GitHub workflows in this repository. Only the latest
+numeric release is supported.
 
 ## Reporting a vulnerability
 
@@ -41,11 +42,21 @@ days. These targets are best-effort.
 - `safe` and `full-auto` install user-level Codex defaults. They do not bypass
   normal configuration precedence or administrator-managed requirements, and
   they are not an administrator enforcement mechanism.
-- Permission profiles are a beta Codex surface. This build requires Codex CLI
-  0.138.0 or newer and is tested with 0.144.1.
-- `launch` requires a clean managed target, sets `CODEX_HOME` only for its child
-  Codex process, forwards arguments without shell interpolation, and preserves
-  the child exit status. Other lifecycle commands never launch Codex.
+- Permission profiles are a beta Codex surface whose configuration syntax is
+  compatible from Codex CLI 0.138.0. This build installs, launches, and tests
+  exactly 0.144.3.
+- `install-cli` and `update-cli` verify the exact pinned official
+  `rust-v0.144.3` installer asset before execution. The official installer then
+  downloads the pinned checksum manifest and host package and verifies their
+  release digests and package checksum from isolated temporary state with a
+  fixed release and install root. Abnormal installer exits terminate its whole
+  process group before the NDDev target lock is released.
+- `launch` requires a clean managed target and the validated target-owned
+  standalone CLI. It sets `CODEX_HOME` only for its child, forwards arguments
+  without shell interpolation, and preserves the child exit status.
+- On macOS, `desktop` delegates only to `codex app` with an optional validated
+  workspace. It does not expose arbitrary download/source flags, implement a
+  desktop updater, or claim that the GUI inherits the selected `CODEX_HOME`.
 - Public workflows use least privilege and immutable action/workflow pins.
 - Full behavioral, mutation, platform, and release validation remains in the
   private NDDev harness; no private fixtures or evidence are distributed here.
@@ -53,6 +64,8 @@ days. These targets are best-effort.
 ## Out of scope
 
 - Codex runtime vulnerabilities not caused by this module.
+- Desktop application vulnerabilities or updater behavior reached through the
+  official `codex app` delegation.
 - Higher-precedence Codex configuration, command line flags, or managed
   requirements that intentionally override or restrict the installed defaults.
 - Modified forks or manual edits that bypass the lifecycle contract.

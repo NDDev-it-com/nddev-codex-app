@@ -1,7 +1,7 @@
 {
-  "contract_version": 1,
-  "description": "Portable, target-explicit setup manager for Codex configuration and repository instructions.",
-  "display_name": "NDDev Codex App",
+  "contract_version": 2,
+  "description": "Portable, target-explicit manager for Codex configuration and an official target-owned Codex CLI install.",
+  "display_name": "NDDev Codex Setup Manager",
   "github_repository": "NDDev-it-com/nddev-codex-app",
   "license": "AGPL-3.0-or-later",
   "manifest_ref": "build/manifest.json",
@@ -28,14 +28,16 @@
     "version_ref": "build/version.json"
   },
   "runtime_launch": {
-    "command": "codex",
-    "direct_command": "CODEX_HOME=<absolute-target> codex [args...]",
+    "command": "<absolute-target>/bin/codex",
+    "direct_command": "CODEX_HOME=<absolute-target> <absolute-target>/bin/codex [args...]",
     "environment_variable": "CODEX_HOME",
+    "executable_source": "validated-target-owned-standalone-install",
     "forwards_arguments": true,
     "forwards_child_exit_code": true,
     "json_manager_errors_supported": true,
     "manager_command": "python3 cli-tools/nddev_codex.py launch --target <absolute-target> -- [args...]",
     "requires_clean_managed_target": true,
+    "required_version": "0.144.3",
     "streams_child_stdio": true,
     "successful_child_output_wrapped": false,
     "target_environment_scope": "child-process-only",
@@ -53,7 +55,11 @@
       "switch",
       "restore",
       "remove",
-      "launch"
+      "software-status",
+      "install-cli",
+      "update-cli",
+      "launch",
+      "desktop"
     ],
     "max_backups": 10,
     "missing_target_argument_rejected": true,
@@ -74,6 +80,49 @@
     ],
     "launch_command": "python3 cli-tools/nddev_codex.py launch --target <absolute-target> -- [args...]",
     "status_command": "python3 cli-tools/nddev_codex.py status --target <absolute-dir> [--json]"
+  },
+  "software_install": {
+    "commands": {
+      "install": "python3 cli-tools/nddev_codex.py install-cli --target <absolute-target> [--json]",
+      "status": "python3 cli-tools/nddev_codex.py software-status --target <absolute-target> [--json]",
+      "update": "python3 cli-tools/nddev_codex.py update-cli --target <absolute-target> [--json]"
+    },
+    "desktop": {
+      "command": "python3 cli-tools/nddev_codex.py desktop --target <absolute-target> [--workspace <absolute-dir>]",
+      "configuration_binding": "not-guaranteed-by-codex-app",
+      "delegate": "codex app",
+      "documented_product": "ChatGPT",
+      "direct_app_management": false,
+      "pinned_cli_packaging": "Codex.app/Codex.dmg",
+      "requires_managed_setup": false,
+      "supported_platforms": [
+        "macos"
+      ]
+    },
+    "installer": {
+      "abnormal_exit_cleanup": "terminate-process-group-before-unlock",
+      "asset": "install.sh",
+      "release_tag": "rust-v0.144.3",
+      "sha256": "1154e9daf713aacd1534efca8042bfd6665ad24bc1d1dfd86b8f439fe60a7a5d",
+      "size_bytes": 25133,
+      "url": "https://github.com/openai/codex/releases/download/rust-v0.144.3/install.sh"
+    },
+    "layout": {
+      "code_mode_host": "packages/standalone/current/bin/codex-code-mode-host",
+      "compatibility_entrypoint": "packages/standalone/current/codex",
+      "current": "packages/standalone/current",
+      "linux_sandbox": "packages/standalone/current/codex-resources/bwrap",
+      "metadata": "packages/standalone/current/codex-package.json",
+      "releases": "packages/standalone/releases",
+      "ripgrep": "packages/standalone/current/codex-path/rg",
+      "visible_code_mode_host_macos": "bin/codex-code-mode-host",
+      "visible_command": "bin/codex"
+    },
+    "supported_platforms": [
+      "macos",
+      "linux"
+    ],
+    "tested_version": "0.144.3"
   },
   "source_root": "setups",
   "version_ref": "build/version.json"

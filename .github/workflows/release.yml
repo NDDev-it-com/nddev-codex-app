@@ -70,16 +70,33 @@ jobs:
           }
           if len(versions) != 1 or semver.fullmatch(version) is None:
               raise SystemExit(f"release version mismatch: {sorted(versions)}")
-          minimum = version_data["codex_cli_requires"]
+          if version_data["schema_version"] != 2:
+              raise SystemExit("unsupported build version schema")
+          if manifest["schema_version"] != 2:
+              raise SystemExit("unsupported manifest schema")
+          if contract["contract_version"] != 2:
+              raise SystemExit("unsupported public contract version")
+          if baseline["schema_version"] != 2:
+              raise SystemExit("unsupported runtime baseline schema")
+          permission_profiles_since = version_data[
+              "codex_permission_profiles_since"
+          ]
           tested = version_data["codex_cli_tested"]
-          if not minimum.startswith(">=") or semver.fullmatch(minimum[2:]) is None:
-              raise SystemExit(f"invalid Codex minimum version: {minimum}")
+          if semver.fullmatch(permission_profiles_since) is None:
+              raise SystemExit(
+                  "invalid Codex permission-profile compatibility floor: "
+                  f"{permission_profiles_since}"
+              )
           if semver.fullmatch(tested) is None:
               raise SystemExit(f"invalid Codex tested version: {tested}")
-          minimum_tuple = tuple(int(part) for part in minimum[2:].split("."))
+          minimum_tuple = tuple(
+              int(part) for part in permission_profiles_since.split(".")
+          )
           tested_tuple = tuple(int(part) for part in tested.split("."))
           if tested_tuple < minimum_tuple:
-              raise SystemExit("Codex tested version is below the minimum")
+              raise SystemExit(
+                  "Codex tested version is below the permission-profile floor"
+              )
           baseline_ref = "references/codex-baseline.json"
           if version_data["runtime_baseline_ref"] != baseline_ref:
               raise SystemExit("build version baseline reference mismatch")
@@ -88,8 +105,7 @@ jobs:
           if contract["runtime_compatibility"]["baseline_ref"] != baseline_ref:
               raise SystemExit("contract baseline reference mismatch")
           expected_version_refs = {
-              "minimum_version_ref": "build/version.json:codex_cli_requires",
-              "tested_version_ref": "build/version.json:codex_cli_tested",
+              "tested_version_ref": "build/version.json:codex_cli_tested"
           }
           if baseline["codex_cli"] != expected_version_refs:
               raise SystemExit("Codex baseline version references mismatch")
@@ -98,6 +114,9 @@ jobs:
               "custom_profiles_surface": "[permissions.<name>]",
               "custom_profiles_used": False,
               "managed_enforcement": False,
+              "minimum_codex_version_ref": (
+                  "build/version.json:codex_permission_profiles_since"
+              ),
               "status": "beta",
           }:
               raise SystemExit("Codex permission-profile baseline mismatch")
@@ -144,9 +163,13 @@ jobs:
           }:
               raise SystemExit("manifest lifecycle hardening contract mismatch")
           expected_launch = {
-              "command": "codex",
-              "direct_command": "CODEX_HOME=<absolute-target> codex [args...]",
+              "command": "<absolute-target>/bin/codex",
+              "direct_command": (
+                  "CODEX_HOME=<absolute-target> "
+                  "<absolute-target>/bin/codex [args...]"
+              ),
               "environment_variable": "CODEX_HOME",
+              "executable_source": "validated-target-owned-standalone-install",
               "forwards_arguments": True,
               "forwards_child_exit_code": True,
               "json_manager_errors_supported": True,
@@ -155,6 +178,7 @@ jobs:
                   "--target <absolute-target> -- [args...]"
               ),
               "requires_clean_managed_target": True,
+              "required_version": tested,
               "streams_child_stdio": True,
               "successful_child_output_wrapped": False,
               "target_environment_scope": "child-process-only",
@@ -164,6 +188,31 @@ jobs:
               raise SystemExit("manifest launch contract mismatch")
           if contract["runtime_launch"] != expected_launch:
               raise SystemExit("public launch contract mismatch")
+          if manifest["software_install"] != contract["software_install"]:
+              raise SystemExit("software-install contract mismatch")
+          software = contract["software_install"]
+          if software["tested_version"] != tested:
+              raise SystemExit("software-install version mismatch")
+          if software["installer"]["release_tag"] != f"rust-v{tested}":
+              raise SystemExit("software-install release tag mismatch")
+          if software["installer"]["abnormal_exit_cleanup"] != (
+              "terminate-process-group-before-unlock"
+          ):
+              raise SystemExit("software-install cleanup contract mismatch")
+          if software["desktop"] != {
+              "command": (
+                  "python3 cli-tools/nddev_codex.py desktop --target "
+                  "<absolute-target> [--workspace <absolute-dir>]"
+              ),
+              "configuration_binding": "not-guaranteed-by-codex-app",
+              "delegate": "codex app",
+              "documented_product": "ChatGPT",
+              "direct_app_management": False,
+              "pinned_cli_packaging": "Codex.app/Codex.dmg",
+              "requires_managed_setup": False,
+              "supported_platforms": ["macos"],
+          }:
+              raise SystemExit("desktop bridge contract mismatch")
           expected = {
               "safe": (":read-only", "on-request"),
               "full-auto": (":danger-full-access", "never"),
