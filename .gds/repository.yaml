@@ -1,0 +1,56 @@
+schema_version: 1
+
+repository:
+  id: "repo_01KXEDY8XHS7RFV8KTJHDTZ8NF"
+  display_name: "nddev-codex-app"
+  roles:
+    - "module"
+  lifecycle: "active"
+
+provider:
+  type: "github"
+  installation: "installation:github-organization"
+  repository_id: 1298793857
+  owner: "NDDev-it-com"
+  name: "nddev-codex-app"
+
+classification:
+  portfolios:
+    - "portfolio:organization-projects"
+    - "portfolio:public-modules"
+  visibility_contract: "public"
+  data_classification: "public"
+
+policy:
+  profiles:
+    - "repository-default"
+    - "organization-default"
+    - "public-module"
+  rollout_ring: "canary-modules"
+
+git:
+  default_branch: "main"
+  integration: "pull-request"
+  branch_model: "task-branches"
+  handoff_pr: "preferred"
+  cleanup: "merged-only"
+
+agent:
+  context_profile: "public-module"
+  generated_agents: true
+  serena:
+    enabled: false
+    provenance_required: false
+
+module:
+  contract: "public"
+  consumption:
+    - "git-submodule"
+  compatibility: "semver"
+  pin_policy: "default-branch-commit"
+  publication:
+    registry: "none"
+    github_release: "required"
+
+release:
+  mode: "github-release"
