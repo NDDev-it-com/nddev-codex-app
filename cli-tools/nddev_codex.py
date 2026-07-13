@@ -2508,15 +2508,18 @@ def bounded_codex_version(executable: Path, target: Path) -> str:
         "LANG": "C",
         "LC_ALL": "C",
     }
-    with tempfile.TemporaryFile() as output:
+    with (
+        tempfile.TemporaryFile() as stdout,
+        tempfile.TemporaryFile() as stderr,
+    ):
         try:
             completed = subprocess.run(
                 [str(executable), "--version"],
                 env=environment,
                 cwd=target,
                 stdin=subprocess.DEVNULL,
-                stdout=output,
-                stderr=output,
+                stdout=stdout,
+                stderr=stderr,
                 check=False,
                 timeout=VERSION_TIMEOUT_SECONDS,
             )
@@ -2524,14 +2527,25 @@ def bounded_codex_version(executable: Path, target: Path) -> str:
             fail("installed Codex version check timed out")
         if completed.returncode != 0:
             fail(f"installed Codex version check failed with exit {completed.returncode}")
-        size = output.tell()
-        if size > VERSION_OUTPUT_MAX_BYTES:
-            fail("installed Codex version output exceeded its size limit")
-        output.seek(0)
+        for stream, label in ((stdout, "output"), (stderr, "diagnostics")):
+            if stream.tell() > VERSION_OUTPUT_MAX_BYTES:
+                fail(f"installed Codex version {label} exceeded its size limit")
+        stdout.seek(0)
+        stderr.seek(0)
         try:
-            text = output.read().decode("utf-8").strip()
+            text = stdout.read().decode("utf-8").strip()
+            diagnostics = stderr.read().decode("utf-8").strip()
         except UnicodeDecodeError:
-            fail("installed Codex version output is not valid UTF-8")
+            fail("installed Codex version output or diagnostics are not valid UTF-8")
+    path_alias_warning = re.fullmatch(
+        r"WARNING: proceeding, even though we could not create PATH aliases: "
+        r"Refusing to create helper binaries under temporary dir "
+        r'"(?:\\.|[^"\\\r\n])*" '
+        r'\(codex_home: AbsolutePathBuf\("(?:\\.|[^"\\\r\n])*"\)\)',
+        diagnostics,
+    )
+    if diagnostics and path_alias_warning is None:
+        fail("installed Codex returned unexpected version diagnostics")
     match = re.fullmatch(r"codex-cli ([0-9][0-9A-Za-z.+-]*)", text)
     if match is None or not SEMVER_PATTERN.fullmatch(match.group(1)):
         fail(f"installed Codex returned an invalid version string: {text!r}")

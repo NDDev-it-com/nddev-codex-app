@@ -1,5 +1,5 @@
 {
-  "build_version": "0.2.0",
+  "build_version": "0.2.1",
   "codex_permission_profiles_since": "0.138.0",
   "codex_cli_tested": "0.144.3",
   "python_requires": ">=3.10",
