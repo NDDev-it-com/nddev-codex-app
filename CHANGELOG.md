@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented here.
 
+## 0.3.2 - 2026-07-13
+
+### Fixed
+
+- Resolved CodeQL cleanup findings in the setup manager and builder generator
+  while preserving fail-closed concurrent-replacement and rollback behavior;
+  newly opened generator directory descriptors are now closed unless their
+  ownership is transferred to the transaction registry.
+- Updated release verification for manifest and contract schema 3 and included
+  the `.agents` marketplace plus `plugins` tree in published archive and
+  runtime bundles.
+
+### Changed
+
+- Advanced the immutable `nddev-builder` plugin cache identity to version
+  `0.3.1` after the generator implementation changed.
+
 ## 0.3.1 - 2026-07-13
 
 ### Fixed
