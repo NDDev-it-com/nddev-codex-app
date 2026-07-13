@@ -33,6 +33,11 @@ STAMP_NAME = "NDDEV-CODEX-SETUP.json"
 BACKUP_NAME = "NDDEV-CODEX-BACKUP.json"
 MANAGED_FILES = ("config.toml", "AGENTS.md")
 OVERRIDE_NAME = "AGENTS.override.md"
+BUILDER_PROFILE_NAME = "nddev-builder.config.toml"
+BUILDER_PROFILE_ID = "nddev-builder"
+BUILDER_MARKETPLACE_ID = "nddev-builder"
+BUILDER_PLUGIN_ID = "nddev-builder"
+BUILDER_PLUGIN_QUALIFIED_ID = f"{BUILDER_PLUGIN_ID}@{BUILDER_MARKETPLACE_ID}"
 OWNER_FILE_MODE = 0o600
 OWNER_DIRECTORY_MODE = 0o700
 METADATA_MAX_BYTES = 256 * 1024
@@ -75,6 +80,11 @@ INSTALLER_TIMEOUT_SECONDS = 600
 VERSION_TIMEOUT_SECONDS = 15
 DOWNLOAD_CHUNK_SIZE = 1024 * 1024
 INSTALLER_OUTPUT_MAX_BYTES = 256 * 1024
+BUILDER_COMMAND_OUTPUT_MAX_BYTES = 256 * 1024
+BUILDER_COMMAND_TIMEOUT_SECONDS = 120
+BUILDER_TREE_MAX_FILES = 256
+BUILDER_TREE_MAX_DIRECTORIES = 256
+BUILDER_TREE_MAX_BYTES = 8 * 1024 * 1024
 INSTALLER_TERMINATION_GRACE_SECONDS = 0.5
 INSTALLER_KILL_WAIT_SECONDS = 2
 CONTROLLED_INSTALLER_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
@@ -135,6 +145,26 @@ class FileSnapshot:
     digest: str
     mode: int
     owner: int | None
+
+
+@dataclass(frozen=True)
+class BuilderCacheDirectorySnapshot:
+    identity: PathIdentity
+    mode: int
+
+
+@dataclass(frozen=True)
+class BuilderCacheTreeSnapshot:
+    root_identity: PathIdentity = field(compare=False)
+    root_mode: int
+    directory_modes: dict[str, int]
+    files: dict[str, tuple[bytes, int]]
+
+
+@dataclass(frozen=True)
+class BuilderCacheTransactionSnapshot:
+    ancestors: tuple[BuilderCacheDirectorySnapshot | None, ...]
+    tree: BuilderCacheTreeSnapshot | None
 
 
 @dataclass
@@ -1443,7 +1473,7 @@ def replace_managed_state(
     guard = current_target_guard(target)
     if guard is None or guard.target_fd is None:
         fail("managed-state replacement requires an active anchored target lock")
-    allowed_names = set((*MANAGED_FILES, STAMP_NAME))
+    allowed_names = set((*MANAGED_FILES, STAMP_NAME, BUILDER_PROFILE_NAME))
     if not names or len(set(names)) != len(names) or not set(names) <= allowed_names:
         fail("managed-state replacement received an invalid path selection")
     if allow_detached_target:
@@ -2657,6 +2687,265 @@ def software_status(target: Path) -> dict[str, Any]:
     }
 
 
+def builder_source_contract() -> tuple[str, bytes]:
+    version_document = load_json_object(
+        ROOT / "build" / "version.json",
+        "build version metadata",
+    )
+    plugin_version = version_document.get("nddev_builder_plugin_version")
+    if not isinstance(plugin_version, str) or not SEMVER_PATTERN.fullmatch(plugin_version):
+        fail("nddev-builder source version is invalid")
+    if version_document.get("build_version") != VERSION or plugin_version != VERSION:
+        fail("nddev-builder source version is not synchronized with the public build")
+
+    plugin_path = ROOT / "plugins" / BUILDER_PLUGIN_ID / ".codex-plugin" / "plugin.json"
+    plugin_content, _ = read_regular_file(
+        plugin_path,
+        "nddev-builder source plugin manifest",
+        max_bytes=METADATA_MAX_BYTES,
+    )
+    plugin = parse_json_object(plugin_content, "nddev-builder source plugin manifest")
+    if plugin.get("name") != BUILDER_PLUGIN_ID or plugin.get("version") != plugin_version:
+        fail("nddev-builder source plugin identity or version is invalid")
+
+    marketplace = load_json_object(
+        ROOT / ".agents" / "plugins" / "marketplace.json",
+        "nddev-builder source marketplace manifest",
+    )
+    plugins = marketplace.get("plugins")
+    if marketplace.get("name") != BUILDER_MARKETPLACE_ID or not isinstance(plugins, list):
+        fail("nddev-builder source marketplace identity is invalid")
+    matching = [
+        entry
+        for entry in plugins
+        if isinstance(entry, dict) and entry.get("name") == BUILDER_PLUGIN_ID
+    ]
+    if len(matching) != 1:
+        fail("nddev-builder source marketplace must contain exactly one builder plugin")
+    source = matching[0].get("source")
+    if source != {"source": "local", "path": "./plugins/nddev-builder"}:
+        fail("nddev-builder source marketplace plugin path is invalid")
+    return plugin_version, plugin_content
+
+
+def builder_profile_bytes() -> bytes:
+    source = json.dumps(str(ROOT), ensure_ascii=False)
+    return (
+        f"[marketplaces.{BUILDER_MARKETPLACE_ID}]\n"
+        'source_type = "local"\n'
+        f"source = {source}\n"
+        "\n"
+        f'[plugins."{BUILDER_PLUGIN_QUALIFIED_ID}"]\n'
+        "enabled = true\n"
+    ).encode("utf-8")
+
+
+def validate_builder_mutated_config(content: bytes, original: bytes) -> None:
+    if not content.startswith(original) or not original.endswith(b"\n"):
+        fail("official Codex plugin commands replaced the managed setup configuration")
+    try:
+        suffix = content[len(original) :].decode("utf-8")
+    except UnicodeDecodeError:
+        fail("official Codex plugin commands wrote invalid UTF-8 configuration")
+    lines = suffix.splitlines()
+    expected_prefix = [
+        "",
+        f"[marketplaces.{BUILDER_MARKETPLACE_ID}]",
+    ]
+    if lines[:2] != expected_prefix or len(lines) != 8 or not content.endswith(b"\n"):
+        fail("official Codex plugin commands wrote an unexpected configuration shape")
+    if (
+        re.fullmatch(
+            r'last_updated = "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z"',
+            lines[2],
+        )
+        is None
+    ):
+        fail("official Codex plugin commands wrote an invalid marketplace timestamp")
+    if lines[3] != 'source_type = "local"' or not lines[4].startswith("source = "):
+        fail("official Codex plugin commands wrote an invalid marketplace source")
+    try:
+        source = json.loads(lines[4].removeprefix("source = "))
+    except json.JSONDecodeError:
+        fail("official Codex plugin commands wrote an invalid marketplace source string")
+    if source != str(ROOT):
+        fail("official Codex plugin commands bound the marketplace to the wrong source")
+    if lines[5:] != [
+        "",
+        f'[plugins."{BUILDER_PLUGIN_QUALIFIED_ID}"]',
+        "enabled = true",
+    ]:
+        fail("official Codex plugin commands enabled an unexpected plugin configuration")
+
+
+def validate_builder_cache_directory_info(info: os.stat_result, label: str) -> None:
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        fail(f"{label} must be a real directory")
+    if hasattr(os, "geteuid") and owner_of(info) != os.geteuid():
+        fail(f"{label} must be owned by the current user")
+    if stat.S_IMODE(info.st_mode) & 0o022:
+        fail(f"{label} must not be writable by group or others")
+
+
+def validate_builder_cache_directory(path: Path, label: str) -> None:
+    validate_builder_cache_directory_info(require_directory(path, label), label)
+
+
+def read_builder_plugin_tree(
+    root: Path,
+    label: str,
+) -> tuple[set[str], dict[str, bytes]]:
+    validate_builder_cache_directory(root, label)
+    directories: set[str] = set()
+    files: dict[str, bytes] = {}
+    total_bytes = 0
+    pending = [root]
+    while pending:
+        directory = pending.pop()
+        try:
+            with os.scandir(directory) as iterator:
+                entries = sorted(iterator, key=lambda entry: entry.name)
+        except OSError as exc:
+            fail(f"cannot inspect {label}: {exc}")
+        for entry in entries:
+            path = Path(entry.path)
+            relative = path.relative_to(root).as_posix()
+            if (
+                entry.name == "__pycache__"
+                or entry.name == ".DS_Store"
+                or entry.name.endswith(".pyc")
+            ):
+                fail(f"{label} contains a forbidden runtime cache entry: {relative}")
+            try:
+                info = path.lstat()
+            except OSError as exc:
+                fail(f"cannot inspect {label} entry {relative}: {exc}")
+            if stat.S_ISLNK(info.st_mode):
+                fail(f"{label} contains a symlink: {relative}")
+            if stat.S_ISDIR(info.st_mode):
+                if len(directories) >= BUILDER_TREE_MAX_DIRECTORIES:
+                    fail(f"{label} exceeds the {BUILDER_TREE_MAX_DIRECTORIES}-directory limit")
+                validate_builder_cache_directory(path, f"{label} directory {relative}")
+                directories.add(relative)
+                pending.append(path)
+                continue
+            if not stat.S_ISREG(info.st_mode):
+                fail(f"{label} contains a non-regular entry: {relative}")
+            if len(files) >= BUILDER_TREE_MAX_FILES:
+                fail(f"{label} exceeds the {BUILDER_TREE_MAX_FILES}-file limit")
+            content, final = read_regular_file(
+                path,
+                f"{label} file {relative}",
+                max_bytes=BUILDER_TREE_MAX_BYTES,
+            )
+            if hasattr(os, "geteuid") and owner_of(final) != os.geteuid():
+                fail(f"{label} file {relative} must be owned by the current user")
+            if stat.S_IMODE(final.st_mode) & 0o022:
+                fail(f"{label} file {relative} must not be writable by group or others")
+            total_bytes += len(content)
+            if total_bytes > BUILDER_TREE_MAX_BYTES:
+                fail(f"{label} exceeds the {BUILDER_TREE_MAX_BYTES}-byte aggregate limit")
+            files[relative] = content
+    return directories, files
+
+
+def inspect_builder_cache(target: Path, plugin_version: str, source_manifest: bytes) -> str:
+    current = target
+    for component, label in (
+        ("plugins", "Codex plugin directory"),
+        ("cache", "Codex plugin cache directory"),
+        (BUILDER_MARKETPLACE_ID, "nddev-builder marketplace cache directory"),
+        (BUILDER_PLUGIN_ID, "nddev-builder plugin cache directory"),
+    ):
+        current = current / component
+        if not path_entry_exists(current):
+            return "missing"
+        validate_builder_cache_directory(current, label)
+
+    version_root = current / plugin_version
+    if not path_entry_exists(version_root):
+        return "missing"
+    validate_builder_cache_directory(version_root, "nddev-builder version cache directory")
+    manifest_directory = version_root / ".codex-plugin"
+    if not path_entry_exists(manifest_directory):
+        return "drifted"
+    validate_builder_cache_directory(
+        manifest_directory,
+        "nddev-builder cached manifest directory",
+    )
+    manifest_path = manifest_directory / "plugin.json"
+    if not path_entry_exists(manifest_path):
+        return "drifted"
+    cached_content, info = read_regular_file(
+        manifest_path,
+        "nddev-builder cached plugin manifest",
+        max_bytes=METADATA_MAX_BYTES,
+    )
+    if hasattr(os, "geteuid") and owner_of(info) != os.geteuid():
+        fail("nddev-builder cached plugin manifest must be owned by the current user")
+    if stat.S_IMODE(info.st_mode) & 0o022:
+        fail("nddev-builder cached plugin manifest must not be writable by group or others")
+    if cached_content != source_manifest:
+        return "drifted"
+    cached = parse_json_object(cached_content, "nddev-builder cached plugin manifest")
+    if cached.get("name") != BUILDER_PLUGIN_ID or cached.get("version") != plugin_version:
+        return "drifted"
+    source_root = ROOT / "plugins" / BUILDER_PLUGIN_ID
+    source_directories, source_files = read_builder_plugin_tree(
+        source_root,
+        "nddev-builder source plugin tree",
+    )
+    cached_directories, cached_files = read_builder_plugin_tree(
+        version_root,
+        "nddev-builder cached plugin tree",
+    )
+    if source_directories != cached_directories or source_files != cached_files:
+        return "drifted"
+    return "current"
+
+
+def inspect_builder_profile(target: Path, expected: bytes) -> str:
+    if target_entry_info(target, BUILDER_PROFILE_NAME) is None:
+        return "missing"
+    content, _ = read_target_file(
+        target,
+        BUILDER_PROFILE_NAME,
+        f"builder profile {target / BUILDER_PROFILE_NAME}",
+        owner_only=True,
+        max_bytes=METADATA_MAX_BYTES,
+    )
+    return "current" if content == expected else "drifted"
+
+
+def builder_status(target: Path) -> dict[str, Any]:
+    plugin_version, source_manifest = builder_source_contract()
+    profile_state = "missing"
+    cache_state = "missing"
+    if ensure_target_directory(target, create=False):
+        profile_state = inspect_builder_profile(target, builder_profile_bytes())
+        cache_state = inspect_builder_cache(target, plugin_version, source_manifest)
+    installation = inspect_software_installation(target)
+    installed = profile_state == "current" and cache_state == "current"
+    state = "installed" if installed else "missing"
+    if not installed and (profile_state != "missing" or cache_state != "missing"):
+        state = "incomplete"
+    return {
+        "schema_version": 1,
+        "command": "builder-status",
+        "target": str(target),
+        "state": state,
+        "installed": installed,
+        "current": installed
+        and installation is not None
+        and installation.version == TESTED_CODEX_VERSION,
+        "profile": BUILDER_PROFILE_NAME,
+        "profile_state": profile_state,
+        "cache_state": cache_state,
+        "plugin_version": plugin_version,
+        "codex_version": installation.version if installation is not None else None,
+    }
+
+
 def download_verified_installer(destination: Path) -> None:
     if INSTALLER_SIZE_BYTES > INSTALLER_MAX_BYTES:
         fail("pinned Codex installer exceeds the download policy")
@@ -2904,6 +3193,770 @@ def wait_for_installer_process_group(
         time.sleep(min(0.02, remaining))
 
 
+def run_builder_plugin_command(
+    installation: SoftwareInstallation,
+    target: Path,
+    arguments: list[str],
+) -> dict[str, Any]:
+    environment = os.environ.copy()
+    environment["CODEX_HOME"] = str(target)
+    process: subprocess.Popen[bytes] | None = None
+    captured = {"stdout": bytearray(), "stderr": bytearray()}
+    try:
+        process = subprocess.Popen(
+            [str(installation.executable), *arguments],
+            cwd=target,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+        )
+        if process.stdout is None or process.stderr is None:
+            fail("official Codex plugin command output pipes are unavailable")
+        selector = selectors.DefaultSelector()
+        streams = {
+            process.stdout.fileno(): (process.stdout, "stdout"),
+            process.stderr.fileno(): (process.stderr, "stderr"),
+        }
+        for stream, _ in streams.values():
+            selector.register(stream, selectors.EVENT_READ)
+        deadline = time.monotonic() + BUILDER_COMMAND_TIMEOUT_SECONDS
+        try:
+            while streams:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    fail("official Codex plugin command timed out")
+                events = selector.select(timeout=min(remaining, 0.5))
+                if not events:
+                    continue
+                for key, _ in events:
+                    stream, label = streams[key.fd]
+                    block = os.read(key.fd, 65536)
+                    if not block:
+                        selector.unregister(stream)
+                        del streams[key.fd]
+                        stream.close()
+                        continue
+                    captured[label].extend(block)
+                    if (
+                        sum(len(value) for value in captured.values())
+                        > BUILDER_COMMAND_OUTPUT_MAX_BYTES
+                    ):
+                        fail("official Codex plugin command output exceeded its size limit")
+        finally:
+            selector.close()
+            for stream, _ in streams.values():
+                stream.close()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            fail("official Codex plugin command timed out")
+        try:
+            returncode = process.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            fail("official Codex plugin command timed out")
+    except BaseException as exc:
+        terminate_installer_process(process)
+        if isinstance(exc, OSError):
+            fail(f"cannot execute official Codex plugin command: {exc}")
+        raise
+
+    try:
+        stdout = bytes(captured["stdout"]).decode("utf-8")
+        stderr = bytes(captured["stderr"]).decode("utf-8")
+    except UnicodeDecodeError:
+        fail("official Codex plugin command output is not valid UTF-8")
+    if returncode != 0:
+        detail = re.sub(r"[^\x09\x0a\x20-\x7e]", "?", (stderr or stdout))[-2000:].strip()
+        suffix = f"; output: {detail}" if detail else ""
+        fail(f"official Codex plugin command failed with exit {returncode}{suffix}")
+    if stderr.strip():
+        fail("official Codex plugin command returned unexpected diagnostics")
+    return parse_json_object(stdout.encode("utf-8"), "official Codex plugin command output")
+
+
+def validate_builder_marketplace_result(result: dict[str, Any]) -> None:
+    require_exact_keys(
+        result,
+        {"marketplaceName", "installedRoot", "alreadyAdded"},
+        "official Codex marketplace-add result",
+    )
+    if result["marketplaceName"] != BUILDER_MARKETPLACE_ID:
+        fail("official Codex marketplace-add result has the wrong marketplace identity")
+    if not isinstance(result["alreadyAdded"], bool):
+        fail("official Codex marketplace-add result has an invalid alreadyAdded flag")
+    installed_root = result["installedRoot"]
+    if not isinstance(installed_root, str) or not Path(installed_root).is_absolute():
+        fail("official Codex marketplace-add result has an invalid installed root")
+    try:
+        resolved_root = Path(installed_root).resolve(strict=True)
+    except OSError as exc:
+        fail(f"official Codex marketplace-add installed root cannot be resolved: {exc}")
+    if resolved_root != ROOT.resolve(strict=True):
+        fail("official Codex marketplace-add result is bound to the wrong source root")
+
+
+def builder_cache_root(target: Path, plugin_version: str) -> Path:
+    return (
+        target / "plugins" / "cache" / BUILDER_MARKETPLACE_ID / BUILDER_PLUGIN_ID / plugin_version
+    )
+
+
+def builder_cache_ancestor_paths(target: Path) -> tuple[Path, ...]:
+    plugin_directory = target / "plugins"
+    cache_directory = plugin_directory / "cache"
+    marketplace_directory = cache_directory / BUILDER_MARKETPLACE_ID
+    return (
+        plugin_directory,
+        cache_directory,
+        marketplace_directory,
+        marketplace_directory / BUILDER_PLUGIN_ID,
+    )
+
+
+def capture_builder_cache_tree(
+    root: Path,
+    label: str,
+) -> BuilderCacheTreeSnapshot | None:
+    if not path_entry_exists(root):
+        return None
+    before = require_directory(root, label)
+    validate_builder_cache_directory_info(before, label)
+    root_identity = identity_of(before)
+    root_mode = stat.S_IMODE(before.st_mode)
+    root_fd = open_directory_fd(root)
+    directory_modes: dict[str, int] = {}
+    files: dict[str, tuple[bytes, int]] = {}
+    directory_count = 0
+    file_count = 0
+    total_bytes = 0
+
+    def capture_directory(directory_fd: int, prefix: str) -> None:
+        nonlocal directory_count, file_count, total_bytes
+        for name in sorted(os.listdir(directory_fd)):
+            relative = f"{prefix}/{name}" if prefix else name
+            if name == "__pycache__" or name == ".DS_Store" or name.endswith(".pyc"):
+                fail(f"{label} contains a forbidden runtime cache entry: {relative}")
+            try:
+                info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            except FileNotFoundError:
+                fail_concurrent(f"{label} entry disappeared during snapshot: {relative}")
+            if stat.S_ISLNK(info.st_mode):
+                fail(f"{label} contains a symlink: {relative}")
+            if stat.S_ISDIR(info.st_mode):
+                directory_count += 1
+                if directory_count > BUILDER_TREE_MAX_DIRECTORIES:
+                    fail(f"{label} exceeds the {BUILDER_TREE_MAX_DIRECTORIES}-directory limit")
+                validate_builder_cache_directory_info(
+                    info,
+                    f"{label} directory {relative}",
+                )
+                child_fd = open_directory_fd(name, dir_fd=directory_fd)
+                try:
+                    opened = os.fstat(child_fd)
+                    if identity_of(opened) != identity_of(info):
+                        fail_concurrent(f"{label} directory changed while opening: {relative}")
+                    validate_builder_cache_directory_info(
+                        opened,
+                        f"{label} directory {relative}",
+                    )
+                    directory_modes[relative] = stat.S_IMODE(opened.st_mode)
+                    capture_directory(child_fd, relative)
+                    final = os.stat(
+                        name,
+                        dir_fd=directory_fd,
+                        follow_symlinks=False,
+                    )
+                    if identity_of(final) != identity_of(opened) or stat.S_IMODE(
+                        final.st_mode
+                    ) != stat.S_IMODE(opened.st_mode):
+                        fail_concurrent(f"{label} directory changed during snapshot: {relative}")
+                    validate_builder_cache_directory_info(
+                        final,
+                        f"{label} directory {relative}",
+                    )
+                finally:
+                    os.close(child_fd)
+                continue
+            if not stat.S_ISREG(info.st_mode):
+                fail(f"{label} contains a non-regular entry: {relative}")
+            file_count += 1
+            if file_count > BUILDER_TREE_MAX_FILES:
+                fail(f"{label} exceeds the {BUILDER_TREE_MAX_FILES}-file limit")
+            content, final = read_file_at(
+                directory_fd,
+                name,
+                f"{label} file {relative}",
+                max_bytes=BUILDER_TREE_MAX_BYTES,
+            )
+            if hasattr(os, "geteuid") and owner_of(final) != os.geteuid():
+                fail(f"{label} file {relative} must be owned by the current user")
+            mode = stat.S_IMODE(final.st_mode)
+            if mode & 0o022:
+                fail(f"{label} file {relative} must not be writable by group or others")
+            total_bytes += len(content)
+            if total_bytes > BUILDER_TREE_MAX_BYTES:
+                fail(f"{label} exceeds the {BUILDER_TREE_MAX_BYTES}-byte aggregate limit")
+            files[relative] = (content, mode)
+
+    try:
+        opened = os.fstat(root_fd)
+        if identity_of(opened) != root_identity:
+            fail_concurrent(f"{label} changed while it was being opened")
+        validate_builder_cache_directory_info(opened, label)
+        capture_directory(root_fd, "")
+        final = require_directory(root, label)
+        if (
+            identity_of(final) != root_identity
+            or identity_of(os.fstat(root_fd)) != root_identity
+            or stat.S_IMODE(final.st_mode) != root_mode
+        ):
+            fail_concurrent(f"{label} changed during snapshot")
+        validate_builder_cache_directory_info(final, label)
+    finally:
+        os.close(root_fd)
+    return BuilderCacheTreeSnapshot(
+        root_identity=root_identity,
+        root_mode=root_mode,
+        directory_modes=directory_modes,
+        files=files,
+    )
+
+
+def capture_builder_cache_transaction(
+    target: Path,
+    plugin_version: str,
+) -> BuilderCacheTransactionSnapshot:
+    guard = current_target_guard(target)
+    if guard is not None:
+        revalidate_guard(guard, allow_missing=False)
+    ancestors: list[BuilderCacheDirectorySnapshot | None] = []
+    for index, path in enumerate(builder_cache_ancestor_paths(target)):
+        if not path_entry_exists(path):
+            ancestors.append(None)
+            continue
+        label = f"nddev-builder cache ancestor {index}"
+        info = require_directory(path, label)
+        validate_builder_cache_directory_info(info, label)
+        ancestors.append(
+            BuilderCacheDirectorySnapshot(
+                identity=identity_of(info),
+                mode=stat.S_IMODE(info.st_mode),
+            )
+        )
+    tree = capture_builder_cache_tree(
+        builder_cache_root(target, plugin_version),
+        "nddev-builder version cache transaction snapshot",
+    )
+    if guard is not None:
+        revalidate_guard(guard, allow_missing=False)
+    return BuilderCacheTransactionSnapshot(tuple(ancestors), tree)
+
+
+def delete_untrusted_builder_cache_directory_contents(
+    directory_fd: int,
+    label: str,
+    root_device: int,
+) -> None:
+    for name in sorted(os.listdir(directory_fd)):
+        relative_label = f"{label} entry {name}"
+        try:
+            info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            fail_concurrent(f"{relative_label} disappeared during rollback")
+        if stat.S_ISDIR(info.st_mode) and not stat.S_ISLNK(info.st_mode):
+            if info.st_dev != root_device:
+                fail(f"{relative_label} crosses a filesystem boundary")
+            child_fd = open_directory_fd(name, dir_fd=directory_fd)
+            try:
+                opened = os.fstat(child_fd)
+                if identity_of(opened) != identity_of(info):
+                    fail_concurrent(f"{relative_label} changed while opening")
+                if opened.st_dev != root_device:
+                    fail(f"{relative_label} crosses a filesystem boundary")
+                os.fchmod(child_fd, OWNER_DIRECTORY_MODE)
+                delete_untrusted_builder_cache_directory_contents(
+                    child_fd,
+                    relative_label,
+                    root_device,
+                )
+                final = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                if (
+                    identity_of(final) != identity_of(opened)
+                    or identity_of(os.fstat(child_fd)) != identity_of(opened)
+                    or final.st_dev != root_device
+                ):
+                    fail_concurrent(f"{relative_label} changed during rollback")
+            finally:
+                os.close(child_fd)
+            os.rmdir(name, dir_fd=directory_fd)
+            continue
+        # Unlink every non-directory entry by its anchored name. Symlinks,
+        # hard links, sockets, FIFOs, and invalid regular files are never opened
+        # or followed outside the quarantined version-cache directory.
+        os.unlink(name, dir_fd=directory_fd)
+    os.fsync(directory_fd)
+
+
+def remove_builder_cache_tree(root: Path, label: str) -> None:
+    if not path_entry_exists(root):
+        return
+    parent = root.parent
+    validate_builder_cache_directory(parent, f"{label} parent")
+    parent_fd = open_directory_fd(parent)
+    quarantine_name = f".nddev-builder-rollback-{secrets.token_hex(8)}"
+    moved = False
+    mutation_started = False
+    try:
+        current = os.stat(root.name, dir_fd=parent_fd, follow_symlinks=False)
+        root_identity = identity_of(current)
+        anchored_rename(
+            root.name,
+            quarantine_name,
+            source_fd=parent_fd,
+            destination_fd=parent_fd,
+        )
+        moved = True
+        quarantined = os.stat(quarantine_name, dir_fd=parent_fd, follow_symlinks=False)
+        if identity_of(quarantined) != root_identity:
+            fail_concurrent(f"{label} changed during rollback quarantine")
+        if entry_exists_at(parent_fd, root.name):
+            fail_concurrent(f"{label} reappeared during rollback")
+        mutation_started = True
+        if stat.S_ISDIR(quarantined.st_mode) and not stat.S_ISLNK(quarantined.st_mode):
+            quarantine_fd = open_directory_fd(quarantine_name, dir_fd=parent_fd)
+            try:
+                opened = os.fstat(quarantine_fd)
+                if identity_of(opened) != root_identity:
+                    fail_concurrent(f"{label} quarantine handle changed")
+                os.fchmod(quarantine_fd, OWNER_DIRECTORY_MODE)
+                delete_untrusted_builder_cache_directory_contents(
+                    quarantine_fd,
+                    f"{label} rollback quarantine",
+                    opened.st_dev,
+                )
+                final = os.stat(
+                    quarantine_name,
+                    dir_fd=parent_fd,
+                    follow_symlinks=False,
+                )
+                if (
+                    identity_of(final) != root_identity
+                    or identity_of(os.fstat(quarantine_fd)) != root_identity
+                ):
+                    fail_concurrent(f"{label} quarantine changed before removal")
+            finally:
+                os.close(quarantine_fd)
+            os.rmdir(quarantine_name, dir_fd=parent_fd)
+        else:
+            os.unlink(quarantine_name, dir_fd=parent_fd)
+        moved = False
+        os.fsync(parent_fd)
+    except BaseException:
+        if moved and not mutation_started and not entry_exists_at(parent_fd, root.name):
+            try:
+                anchored_rename(
+                    quarantine_name,
+                    root.name,
+                    source_fd=parent_fd,
+                    destination_fd=parent_fd,
+                )
+            except OSError:
+                pass
+        raise
+    finally:
+        os.close(parent_fd)
+
+
+def create_builder_cache_tree(
+    root: Path,
+    snapshot: BuilderCacheTreeSnapshot,
+) -> None:
+    parent = root.parent
+    validate_builder_cache_directory(parent, "nddev-builder cache restore parent")
+    parent_fd = open_directory_fd(parent)
+    stage_name = f".nddev-builder-restore-{secrets.token_hex(8)}"
+    stage = parent / stage_name
+    created = False
+    try:
+        if entry_exists_at(parent_fd, root.name):
+            fail_concurrent("nddev-builder cache reappeared before restoration")
+        os.mkdir(stage_name, OWNER_DIRECTORY_MODE, dir_fd=parent_fd)
+        created = True
+        stage_fd = open_directory_fd(stage_name, dir_fd=parent_fd)
+        try:
+            for relative, _mode in sorted(
+                snapshot.directory_modes.items(),
+                key=lambda item: (item[0].count("/"), item[0]),
+            ):
+                path = stage / relative
+                path.mkdir(mode=OWNER_DIRECTORY_MODE)
+            for relative, (content, mode) in sorted(snapshot.files.items()):
+                write_new_file(stage / relative, content, mode)
+            for relative, mode in sorted(
+                snapshot.directory_modes.items(),
+                key=lambda item: (-item[0].count("/"), item[0]),
+            ):
+                directory_fd = open_directory_fd(stage / relative)
+                try:
+                    os.fchmod(directory_fd, mode)
+                    validate_builder_cache_directory_info(
+                        os.fstat(directory_fd),
+                        f"restored nddev-builder cache directory {relative}",
+                    )
+                finally:
+                    os.close(directory_fd)
+            os.fchmod(stage_fd, snapshot.root_mode)
+            validate_builder_cache_directory_info(
+                os.fstat(stage_fd),
+                "restored nddev-builder cache root",
+            )
+            os.fsync(stage_fd)
+        finally:
+            os.close(stage_fd)
+        if (
+            capture_builder_cache_tree(
+                stage,
+                "staged nddev-builder cache restoration",
+            )
+            != snapshot
+        ):
+            fail("staged nddev-builder cache restoration does not match its snapshot")
+        if entry_exists_at(parent_fd, root.name):
+            fail_concurrent("nddev-builder cache reappeared during restoration")
+        anchored_rename(
+            stage_name,
+            root.name,
+            source_fd=parent_fd,
+            destination_fd=parent_fd,
+        )
+        created = False
+        os.fsync(parent_fd)
+    finally:
+        os.close(parent_fd)
+        if created and path_entry_exists(stage):
+            remove_builder_cache_tree(stage, "failed nddev-builder cache restoration")
+
+
+def restore_builder_cache_transaction(
+    target: Path,
+    plugin_version: str,
+    expected: BuilderCacheTransactionSnapshot,
+) -> None:
+    guard = current_target_guard(target)
+    if guard is not None:
+        revalidate_guard(guard, allow_missing=False)
+    ancestor_paths = builder_cache_ancestor_paths(target)
+    for index, (path, prior) in enumerate(zip(ancestor_paths, expected.ancestors, strict=True)):
+        if not path_entry_exists(path):
+            continue
+        label = f"nddev-builder cache ancestor {index}"
+        info = require_directory(path, label)
+        if prior is not None and identity_of(info) != prior.identity:
+            fail_concurrent(f"{label} changed during install-builder")
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+            fail(f"{label} must remain a real directory")
+        if hasattr(os, "geteuid") and owner_of(info) != os.geteuid():
+            fail(f"{label} must remain owned by the current user")
+        if prior is None:
+            validate_builder_cache_directory_info(info, label)
+        directory_fd = open_directory_fd(path)
+        try:
+            temporary_mode = OWNER_DIRECTORY_MODE if prior is None else prior.mode | 0o700
+            os.fchmod(directory_fd, temporary_mode)
+            validate_builder_cache_directory_info(os.fstat(directory_fd), label)
+        finally:
+            os.close(directory_fd)
+
+    root = builder_cache_root(target, plugin_version)
+    current_tree_invalid = False
+    try:
+        current_tree = capture_builder_cache_tree(
+            root,
+            "nddev-builder version cache before rollback",
+        )
+    except ConcurrentTargetChange:
+        raise
+    except (CodexSetupError, OSError):
+        current_tree = None
+        current_tree_invalid = True
+    if current_tree_invalid or current_tree != expected.tree:
+        if path_entry_exists(root):
+            remove_builder_cache_tree(root, "nddev-builder version cache")
+        if expected.tree is not None:
+            create_builder_cache_tree(root, expected.tree)
+
+    for index in range(len(ancestor_paths) - 1, -1, -1):
+        path = ancestor_paths[index]
+        prior = expected.ancestors[index]
+        label = f"nddev-builder cache ancestor {index}"
+        if prior is not None:
+            if not path_entry_exists(path):
+                fail(f"{label} disappeared during install-builder")
+            info = require_directory(path, label)
+            if identity_of(info) != prior.identity:
+                fail_concurrent(f"{label} changed during install-builder")
+            directory_fd = open_directory_fd(path)
+            try:
+                os.fchmod(directory_fd, prior.mode)
+            finally:
+                os.close(directory_fd)
+            continue
+        if not path_entry_exists(path):
+            continue
+        validate_builder_cache_directory(path, label)
+        directory_fd = open_directory_fd(path)
+        try:
+            if os.listdir(directory_fd):
+                fail_concurrent(f"{label} gained unrelated content during install-builder")
+            current_identity = identity_of(os.fstat(directory_fd))
+        finally:
+            os.close(directory_fd)
+        parent_fd = open_directory_fd(path.parent)
+        try:
+            current = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
+            if identity_of(current) != current_identity:
+                fail_concurrent(f"{label} changed before rollback removal")
+            os.rmdir(path.name, dir_fd=parent_fd)
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+
+    if capture_builder_cache_transaction(target, plugin_version) != expected:
+        fail("nddev-builder cache rollback postcondition failed")
+
+
+def validate_builder_plugin_result(
+    result: dict[str, Any],
+    target: Path,
+    plugin_version: str,
+) -> None:
+    require_exact_keys(
+        result,
+        {"pluginId", "name", "marketplaceName", "version", "installedPath", "authPolicy"},
+        "official Codex plugin-add result",
+    )
+    if (
+        result["pluginId"] != BUILDER_PLUGIN_QUALIFIED_ID
+        or result["name"] != BUILDER_PLUGIN_ID
+        or result["marketplaceName"] != BUILDER_MARKETPLACE_ID
+        or result["version"] != plugin_version
+        or result["authPolicy"] != "ON_INSTALL"
+    ):
+        fail("official Codex plugin-add result has an invalid plugin identity")
+    installed_path = result["installedPath"]
+    if not isinstance(installed_path, str) or not Path(installed_path).is_absolute():
+        fail("official Codex plugin-add result has an invalid installed path")
+    try:
+        actual = Path(installed_path).resolve(strict=True)
+        expected = builder_cache_root(target, plugin_version).resolve(strict=True)
+    except OSError as exc:
+        fail(f"official Codex plugin-add installed path cannot be resolved: {exc}")
+    if actual != expected:
+        fail("official Codex plugin-add result is bound to the wrong cache path")
+
+
+def capture_builder_files(
+    target: Path,
+) -> tuple[dict[str, FileSnapshot | None], dict[str, bytes | None]]:
+    names = (*MANAGED_FILES, STAMP_NAME, BUILDER_PROFILE_NAME)
+    snapshots: dict[str, FileSnapshot | None] = {}
+    contents: dict[str, bytes | None] = {}
+    for name in names:
+        snapshot = snapshot_target_file(target, name, owner_only=False)
+        snapshots[name] = snapshot
+        if snapshot is None:
+            contents[name] = None
+            continue
+        content, _ = read_target_file(
+            target,
+            name,
+            f"builder transaction path {target / name}",
+            owner_only=True,
+            max_bytes=(
+                METADATA_MAX_BYTES
+                if name in {STAMP_NAME, BUILDER_PROFILE_NAME}
+                else MANAGED_PAYLOAD_MAX_BYTES
+            ),
+        )
+        contents[name] = content
+    return snapshots, contents
+
+
+def assert_builder_paths_unchanged(
+    target: Path,
+    expected: dict[str, FileSnapshot | None],
+    names: tuple[str, ...],
+) -> None:
+    for name in names:
+        if snapshot_target_file(target, name, owner_only=False) != expected[name]:
+            fail(f"official Codex plugin command changed an unauthorized path: {target / name}")
+
+
+def restore_builder_files(
+    target: Path,
+    original_snapshots: dict[str, FileSnapshot | None],
+    original_contents: dict[str, bytes | None],
+) -> None:
+    names = (*MANAGED_FILES, STAMP_NAME, BUILDER_PROFILE_NAME)
+    current: dict[str, FileSnapshot | None] = {}
+    selected: list[str] = []
+    for name in names:
+        current[name] = snapshot_target_file(target, name, owner_only=False)
+        if current[name] != original_snapshots[name]:
+            selected.append(name)
+    if selected:
+        replace_managed_state(
+            target,
+            original_contents,
+            current,
+            names=tuple(selected),
+        )
+    for name in names:
+        expected_content = original_contents[name]
+        if expected_content is None:
+            if snapshot_target_file(target, name, owner_only=False) is not None:
+                fail(f"builder transaction rollback could not remove {target / name}")
+            continue
+        restored, _ = read_target_file(
+            target,
+            name,
+            f"restored builder transaction path {target / name}",
+            owner_only=True,
+            max_bytes=(
+                METADATA_MAX_BYTES
+                if name in {STAMP_NAME, BUILDER_PROFILE_NAME}
+                else MANAGED_PAYLOAD_MAX_BYTES
+            ),
+        )
+        if restored != expected_content:
+            fail(f"builder transaction rollback content mismatch for {target / name}")
+
+
+def install_builder(target: Path) -> dict[str, Any]:
+    plugin_version, source_manifest = builder_source_contract()
+    expected_profile = builder_profile_bytes()
+    with target_lock(target) as guard:
+        require_effective_clean_managed(target)
+        installation = require_current_software(target)
+        profile_state = inspect_builder_profile(target, expected_profile)
+        cache_state = inspect_builder_cache(target, plugin_version, source_manifest)
+        if profile_state == "drifted":
+            fail(f"existing {BUILDER_PROFILE_NAME} is not the canonical builder profile")
+        if cache_state == "drifted":
+            fail("current nddev-builder plugin cache manifest is invalid")
+        if profile_state == "current" and cache_state == "current":
+            revalidate_guard(guard, allow_missing=False)
+            return {
+                "schema_version": 1,
+                "command": "install-builder",
+                "target": str(target),
+                "changed": False,
+                "plugin_version": plugin_version,
+                "profile": BUILDER_PROFILE_NAME,
+            }
+
+        original_snapshots, original_contents = capture_builder_files(target)
+        original_cache = capture_builder_cache_transaction(target, plugin_version)
+        guard.expected_managed = {
+            name: original_snapshots[name] for name in (*MANAGED_FILES, STAMP_NAME)
+        }
+        guard.mutated_paths.clear()
+        guard.manager_results.clear()
+        try:
+            marketplace_result = run_builder_plugin_command(
+                installation,
+                target,
+                ["plugin", "marketplace", "add", str(ROOT), "--json"],
+            )
+            validate_builder_marketplace_result(marketplace_result)
+            revalidate_guard(guard, allow_missing=False)
+            assert_builder_paths_unchanged(
+                target,
+                original_snapshots,
+                ("AGENTS.md", STAMP_NAME, BUILDER_PROFILE_NAME),
+            )
+            installation = require_current_software(target)
+            plugin_result = run_builder_plugin_command(
+                installation,
+                target,
+                ["plugin", "add", BUILDER_PLUGIN_QUALIFIED_ID, "--json"],
+            )
+            validate_builder_plugin_result(plugin_result, target, plugin_version)
+            revalidate_guard(guard, allow_missing=False)
+            assert_builder_paths_unchanged(
+                target,
+                original_snapshots,
+                ("AGENTS.md", STAMP_NAME, BUILDER_PROFILE_NAME),
+            )
+            mutated_config, _ = read_target_file(
+                target,
+                "config.toml",
+                f"official Codex plugin configuration {target / 'config.toml'}",
+                max_bytes=METADATA_MAX_BYTES,
+            )
+            original_config = original_contents["config.toml"]
+            if original_config is None:
+                fail("managed config.toml disappeared from the builder transaction snapshot")
+            validate_builder_mutated_config(mutated_config, original_config)
+            if inspect_builder_cache(target, plugin_version, source_manifest) != "current":
+                fail("official Codex plugin installation did not produce the pinned cache manifest")
+
+            current_config = snapshot_target_file(target, "config.toml", owner_only=False)
+            current_profile = snapshot_target_file(target, BUILDER_PROFILE_NAME, owner_only=False)
+            desired = {
+                "config.toml": original_config,
+                BUILDER_PROFILE_NAME: expected_profile,
+            }
+            expected = {
+                "config.toml": current_config,
+                BUILDER_PROFILE_NAME: current_profile,
+            }
+            replace_managed_state(
+                target,
+                desired,
+                expected,
+                names=("config.toml", BUILDER_PROFILE_NAME),
+            )
+            require_effective_clean_managed(target)
+            require_current_software(target)
+            if inspect_builder_profile(target, expected_profile) != "current":
+                fail("nddev-builder profile installation postcondition failed")
+            if inspect_builder_cache(target, plugin_version, source_manifest) != "current":
+                fail("nddev-builder cache installation postcondition failed")
+            assert_builder_paths_unchanged(
+                target,
+                original_snapshots,
+                ("AGENTS.md", STAMP_NAME),
+            )
+        except BaseException as operation_error:
+            try:
+                restore_builder_files(target, original_snapshots, original_contents)
+                restore_builder_cache_transaction(
+                    target,
+                    plugin_version,
+                    original_cache,
+                )
+                require_effective_clean_managed(target)
+            except BaseException as rollback_error:
+                raise CodexSetupError(
+                    "install-builder failed and configuration/cache rollback also failed: "
+                    f"{type(operation_error).__name__}: {operation_error}"
+                ) from rollback_error
+            raise
+        finally:
+            guard.mutated_paths.clear()
+            guard.manager_results.clear()
+    return {
+        "schema_version": 1,
+        "command": "install-builder",
+        "target": str(target),
+        "changed": True,
+        "plugin_version": plugin_version,
+        "profile": BUILDER_PROFILE_NAME,
+    }
+
+
 def install_or_update_cli(target: Path, command: str) -> dict[str, Any]:
     before = inspect_software_installation(target)
     if before is not None and before.version == TESTED_CODEX_VERSION:
@@ -3015,6 +4068,12 @@ def human_output(value: dict[str, Any]) -> str:
         drift = f"; drift={','.join(value['drift'])}" if value["drift"] else ""
         override = f"; {OVERRIDE_NAME}=present" if value["agents_override_present"] else ""
         return f"{value['state']}{setup}: {value['target']}{drift}{override}"
+    if command == "builder-status":
+        return (
+            f"{value['state']}: {value['target']}; "
+            f"profile={value['profile_state']}; cache={value['cache_state']}; "
+            f"plugin={value['plugin_version']}"
+        )
     if command == "plan":
         changes = ", ".join(value["changes"]) or "none"
         return f"{value['operation']} {value['setup_id']} at {value['target']}; changes: {changes}"
@@ -3050,6 +4109,8 @@ def build_parser() -> argparse.ArgumentParser:
         ("software-status", "Inspect target-owned Codex CLI software."),
         ("install-cli", "Install the pinned official Codex CLI release."),
         ("update-cli", "Update target-owned Codex CLI to the pinned release."),
+        ("builder-status", "Inspect the isolated nddev-builder plugin profile."),
+        ("install-builder", "Install nddev-builder without changing the setup config."),
     ):
         command_parser = subparsers.add_parser(command, help=help_text)
         add_target(command_parser)
@@ -3103,6 +4164,10 @@ def run(args: argparse.Namespace) -> dict[str, Any] | int:
         return software_status(target)
     if args.command in {"install-cli", "update-cli"}:
         return install_or_update_cli(target, args.command)
+    if args.command == "builder-status":
+        return builder_status(target)
+    if args.command == "install-builder":
+        return install_builder(target)
     if args.command == "launch":
         return launch_codex(target, list(args.codex_args))
     if args.command == "desktop":

@@ -1,0 +1,36 @@
+{
+  "name": "nddev-builder",
+  "version": "0.3.0",
+  "description": "Create and validate native Codex skills, plugins, marketplaces, agents, hooks, MCP servers, app mappings, configuration, instructions, and execpolicy rules.",
+  "author": {
+    "name": "Danil Silantyev / NDDev",
+    "url": "https://github.com/rldyourmnd"
+  },
+  "homepage": "https://github.com/NDDev-it-com/nddev-codex-app/tree/main/plugins/nddev-builder",
+  "repository": "https://github.com/NDDev-it-com/nddev-codex-app",
+  "license": "AGPL-3.0-or-later",
+  "keywords": [
+    "agents",
+    "codex",
+    "developer-tools",
+    "hooks",
+    "mcp",
+    "plugins",
+    "skills"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "NDDev Builder",
+    "shortDescription": "Create and validate native Codex artifacts",
+    "longDescription": "A skills-first toolkit with conservative generators, deterministic static checkers, official runtime validation guidance, and no copied slash-command surface.",
+    "developerName": "NDDev",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Execute"
+    ],
+    "websiteURL": "https://github.com/NDDev-it-com/nddev-codex-app",
+    "defaultPrompt": "Use NDDev Builder to create or validate a native Codex artifact."
+  }
+}

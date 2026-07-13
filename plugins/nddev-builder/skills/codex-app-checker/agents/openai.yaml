@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex App Checker"
+  short_description: "Check Codex app ids, linkage, and auth boundaries"
+  default_prompt: "Use $codex-app-checker to validate this Codex app connector manifest."

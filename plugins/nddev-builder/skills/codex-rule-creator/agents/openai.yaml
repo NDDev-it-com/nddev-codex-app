@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Rule Creator"
+  short_description: "Create narrow, tested Codex execpolicy rules"
+  default_prompt: "Use $codex-rule-creator to create and validate a native Codex execpolicy rule."

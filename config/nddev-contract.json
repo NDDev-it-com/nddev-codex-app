@@ -1,6 +1,6 @@
 {
-  "contract_version": 2,
-  "description": "Portable, target-explicit manager for Codex configuration and an official target-owned Codex CLI install.",
+  "contract_version": 3,
+  "description": "Portable, target-explicit manager for Codex configuration and an official target-owned Codex CLI install, plus an independently installable native Codex builder marketplace.",
   "display_name": "NDDev Codex Setup Manager",
   "github_repository": "NDDev-it-com/nddev-codex-app",
   "license": "AGPL-3.0-or-later",
@@ -20,6 +20,54 @@
     "built_in_profiles_only": true,
     "configuration_precedence_applies": true,
     "custom_permissions_table_used": false
+  },
+  "plugin_marketplace": {
+    "artifact_families": [
+      "skill",
+      "plugin",
+      "marketplace",
+      "agent",
+      "hook",
+      "mcp",
+      "app",
+      "config",
+      "instructions",
+      "rule"
+    ],
+    "checker": "plugins/nddev-builder/scripts/check_codex_artifact.py",
+    "generator": "plugins/nddev-builder/scripts/create_codex_artifact.py",
+    "installation": {
+      "cache_owner": "official-codex-plugin-lifecycle",
+      "cache_validation": "bounded-exact-source-tree",
+      "install_command": "python3 cli-tools/nddev_codex.py install-builder --target <absolute-target> [--json]",
+      "manager_restores_primary_config": true,
+      "marketplace_add": "<absolute-target>/bin/codex plugin marketplace add <absolute-repository-root> --json",
+      "orthogonal_to_setups": true,
+      "plugin_add": "<absolute-target>/bin/codex plugin add nddev-builder@nddev-builder --json",
+      "profile": "nddev-builder.config.toml",
+      "profile_owner": "nddev-codex-app",
+      "profile_selection": "--profile nddev-builder",
+      "runtime_owned_cache": true,
+      "status_command": "python3 cli-tools/nddev_codex.py builder-status --target <absolute-target> [--json]"
+    },
+    "marketplace_id": "nddev-builder",
+    "marketplace_manifest": ".agents/plugins/marketplace.json",
+    "official_documentation": {
+      "agents": "https://learn.chatgpt.com/docs/agent-configuration/subagents#custom-agents",
+      "apps": "https://learn.chatgpt.com/docs/build-plugins#create-and-test-a-plugin-locally-that-points-to-an-mcp-server-backed-dev-mode-app",
+      "config": "https://learn.chatgpt.com/docs/config-file/config-basic#configuration-precedence",
+      "hooks": "https://learn.chatgpt.com/docs/hooks",
+      "instructions": "https://learn.chatgpt.com/docs/agent-configuration/agents-md#how-codex-discovers-guidance",
+      "marketplace": "https://learn.chatgpt.com/docs/build-plugins#marketplace-metadata",
+      "mcp": "https://learn.chatgpt.com/docs/extend/mcp",
+      "plugins": "https://learn.chatgpt.com/docs/build-plugins#plugin-structure",
+      "rules": "https://learn.chatgpt.com/docs/agent-configuration/rules#create-a-rules-file",
+      "skills": "https://learn.chatgpt.com/docs/build-skills"
+    },
+    "plugin_id": "nddev-builder",
+    "plugin_manifest": "plugins/nddev-builder/.codex-plugin/plugin.json",
+    "plugin_version_ref": "build/version.json:nddev_builder_plugin_version",
+    "slash_commands_shipped": false
   },
   "product_name": "nddev-codex-app",
   "runtime_compatibility": {
@@ -58,6 +106,8 @@
       "software-status",
       "install-cli",
       "update-cli",
+      "builder-status",
+      "install-builder",
       "launch",
       "desktop"
     ],
@@ -79,6 +129,7 @@
       "full-auto"
     ],
     "launch_command": "python3 cli-tools/nddev_codex.py launch --target <absolute-target> -- [args...]",
+    "builder_launch_command": "python3 cli-tools/nddev_codex.py launch --target <absolute-target> -- --profile nddev-builder [args...]",
     "status_command": "python3 cli-tools/nddev_codex.py status --target <absolute-dir> [--json]"
   },
   "software_install": {

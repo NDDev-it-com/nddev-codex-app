@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Hook Checker"
+  short_description: "Check Codex hook schemas, handlers, and failure paths"
+  default_prompt: "Use $codex-hook-checker to validate these Codex hooks and their command handlers."

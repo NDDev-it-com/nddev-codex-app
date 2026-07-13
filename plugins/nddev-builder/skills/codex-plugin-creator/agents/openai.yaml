@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Plugin Creator"
+  short_description: "Create validated native Codex plugin bundles"
+  default_prompt: "Use $codex-plugin-creator to create and validate a native Codex plugin bundle."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Skill Creator"
+  short_description: "Create concise, validated native Codex skills"
+  default_prompt: "Use $codex-skill-creator to create and validate a native Codex skill for this repository."

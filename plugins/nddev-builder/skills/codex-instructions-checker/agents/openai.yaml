@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Instructions Checker"
+  short_description: "Check AGENTS.md facts, scope, and precedence"
+  default_prompt: "Use $codex-instructions-checker to audit this AGENTS.md instruction chain."

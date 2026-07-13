@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Skill Checker"
+  short_description: "Check Codex skills, routing, metadata, and resources"
+  default_prompt: "Use $codex-skill-checker to validate this Codex skill and report actionable findings."

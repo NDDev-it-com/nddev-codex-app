@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex MCP Checker"
+  short_description: "Check Codex MCP transports, secrets, and connectivity"
+  default_prompt: "Use $codex-mcp-checker to validate this Codex MCP definition and its transport."

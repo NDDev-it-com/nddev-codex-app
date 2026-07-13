@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Config Checker"
+  short_description: "Check Codex TOML, safety, precedence, and runtime parsing"
+  default_prompt: "Use $codex-config-checker to validate this Codex configuration and its effective safety posture."
