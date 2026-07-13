@@ -1,7 +1,7 @@
 # NDDev Codex Setup Manager
 
 `nddev-codex-app` is a dependency-free manager for a caller-selected Codex
-home. Version `0.2.0` installs the exact tested official Codex CLI standalone
+home. Version `0.2.1` installs the exact tested official Codex CLI standalone
 release into that target and switches one of two complete NDDev configuration
 sets without deleting unrelated target state.
 
@@ -67,9 +67,10 @@ After installation, the manager validates the target-owned `current` release,
 the exact `codex-package.json` schema, host platform identity, visible command
 symlinks, compatibility entrypoint, code-mode host, bundled ripgrep, Linux
 sandbox helper, executable ownership/modes, bounded `codex --version` output,
-and exact version. `install-cli` and `update-cli` are idempotent when `0.144.3`
-is already current. A different installed version must be advanced with
-`update-cli`.
+the official temporary-directory PATH-alias diagnostic when present, and exact
+canonical stdout version. `install-cli` and `update-cli` are idempotent when
+`0.144.3` is already current. A different installed version must be advanced
+with `update-cli`.
 
 `software-status` is non-mutating and reports `installed`, `current`, `version`,
 and `executable`. Partial or unsafe standalone layouts fail closed rather than

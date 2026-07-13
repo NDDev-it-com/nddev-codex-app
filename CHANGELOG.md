@@ -2,6 +2,14 @@
 
 All notable changes to this project are documented here.
 
+## 0.2.1 - 2026-07-13
+
+### Fixed
+
+- Accept the bounded official temporary-directory PATH-alias diagnostic from
+  the Codex version probe while continuing to reject unknown diagnostics and
+  require one exact canonical `codex-cli <version>` stdout line.
+
 ## 0.2.0 - 2026-07-13
 
 ### Added
