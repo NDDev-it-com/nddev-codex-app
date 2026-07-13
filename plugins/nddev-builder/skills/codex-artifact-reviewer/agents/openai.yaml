@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Artifact Reviewer"
+  short_description: "Review all Codex artifacts for release readiness"
+  default_prompt: "Use $codex-artifact-reviewer to run a complete Codex artifact review and return PASS or FAIL."

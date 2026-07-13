@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Marketplace Checker"
+  short_description: "Check Codex catalogs, sources, policies, and plugins"
+  default_prompt: "Use $codex-marketplace-checker to validate this Codex marketplace and its plugin sources."

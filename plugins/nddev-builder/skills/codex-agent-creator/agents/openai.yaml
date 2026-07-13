@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Agent Creator"
+  short_description: "Create scoped, validated Codex custom subagents"
+  default_prompt: "Use $codex-agent-creator to create and validate a native Codex custom agent."

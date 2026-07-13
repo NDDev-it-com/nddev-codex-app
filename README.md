@@ -1,9 +1,10 @@
 # NDDev Codex Setup Manager
 
 `nddev-codex-app` is a dependency-free manager for a caller-selected Codex
-home. Version `0.2.1` installs the exact tested official Codex CLI standalone
+home. Version `0.3.0` installs the exact tested official Codex CLI standalone
 release into that target and switches one of two complete NDDev configuration
-sets without deleting unrelated target state.
+sets without deleting unrelated target state. The repository also publishes
+the independently installable `nddev-builder` Codex marketplace.
 
 The current OpenAI desktop product is the ChatGPT app for macOS and Windows. It
 contains separate Chat plus selectable ChatGPT Work and Codex modes. Codex CLI
@@ -28,8 +29,10 @@ packages/standalone/current
 packages/standalone/releases/<version>-<platform>/
 ```
 
-Credentials, sessions, caches, and every other unrelated target entry remain
-untouched. The manager never infers or defaults to `~/.codex`.
+Credentials, sessions, and entries unrelated to the selected lifecycle remain
+untouched. Setup switching and removal do not modify the standalone software
+layout, builder profile, or Codex-owned builder cache. The manager never infers
+or defaults to `~/.codex`.
 
 ## Requirements
 
@@ -109,11 +112,53 @@ required to change setup identity. Unmanaged `config.toml` or `AGENTS.md`,
 managed drift, unsafe links, and a target-level `AGENTS.override.md` fail
 closed.
 
+## Install NDDev Builder
+
+`nddev-builder` is a native Codex marketplace and plugin, not a third
+permission setup. The manager keeps reusable authoring capabilities independent
+from the selected `safe` or `full-auto` posture: Codex owns the plugin cache,
+while NDDev owns one deterministic `nddev-builder.config.toml` overlay.
+
+After applying a setup and installing the target-owned CLI, install and inspect
+the builder through the manager:
+
+```bash
+python3 cli-tools/nddev_codex.py install-builder \
+  --target /absolute/path/to/codex-home --json
+python3 cli-tools/nddev_codex.py builder-status \
+  --target /absolute/path/to/codex-home --json
+python3 cli-tools/nddev_codex.py launch \
+  --target /absolute/path/to/codex-home -- \
+  --profile nddev-builder
+```
+
+`install-builder` invokes the target-owned pinned Codex CLI's official
+`plugin marketplace add` and `plugin add` commands with bounded output and a
+timeout. It validates the complete bounded plugin cache tree against the source,
+including the exact manifest and version, extracts only the stable marketplace/
+plugin activation into the owner-only profile, and restores the managed
+`config.toml` byte-for-byte. Failure rolls back the configuration, profile, and
+the bounded versioned cache tree to its exact prior bytes and modes;
+`AGENTS.md`, the setup stamp, unrelated plugins, and setup permissions remain
+unchanged.
+The profile and Codex-owned plugin cache are preserved across setup switches
+and setup removal.
+
+The marketplace exposes skills for creating and checking every supported
+builder artifact family: skills, plugins, marketplaces, custom-agent TOML,
+hooks, MCP configuration, ChatGPT app mappings, Codex config, `AGENTS.md`, and
+execpolicy rules. It intentionally ships no copied slash-command files and no
+plugin-bundled custom agents because neither is a native Codex plugin surface.
+See `plugins/nddev-builder/README.md` for its exact inventory and checker use.
+
 ## Launch CLI or delegate the desktop bridge
 
 ```bash
 python3 cli-tools/nddev_codex.py launch \
   --target /absolute/path/to/codex-home -- --version
+python3 cli-tools/nddev_codex.py launch \
+  --target /absolute/path/to/codex-home -- \
+  --profile nddev-builder
 python3 cli-tools/nddev_codex.py desktop \
   --target /absolute/path/to/codex-home
 python3 cli-tools/nddev_codex.py desktop \
@@ -139,7 +184,7 @@ CODEX_HOME=/absolute/path/to/codex-home \
   /absolute/path/to/codex-home/bin/codex
 ```
 
-Lifecycle and software result commands support `--json`. `launch` and
+Lifecycle, software, and builder result commands support `--json`. `launch` and
 `desktop` use JSON only for manager preflight or spawn errors; successful child
 output remains raw.
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Instructions Creator"
+  short_description: "Create scoped, durable Codex AGENTS.md guidance"
+  default_prompt: "Use $codex-instructions-creator to create and validate scoped AGENTS.md instructions."

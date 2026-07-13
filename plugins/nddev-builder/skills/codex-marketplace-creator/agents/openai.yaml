@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Marketplace Creator"
+  short_description: "Create auditable Codex plugin marketplaces"
+  default_prompt: "Use $codex-marketplace-creator to create and validate a Codex plugin marketplace."

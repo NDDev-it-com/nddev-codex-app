@@ -5,7 +5,7 @@
     "location": "sibling .<target-name>.nddev-codex-backups",
     "slots": 10
   },
-  "build_version": "0.2.1",
+  "build_version": "0.3.0",
   "command_policy": {
     "json_supported": [
       "list",
@@ -17,7 +17,9 @@
       "remove",
       "software-status",
       "install-cli",
-      "update-cli"
+      "update-cli",
+      "builder-status",
+      "install-builder"
     ],
     "plan_mutates": false,
     "restore_backup_option": "--backup <0..9>",
@@ -31,6 +33,8 @@
       "software-status",
       "install-cli",
       "update-cli",
+      "builder-status",
+      "install-builder",
       "launch",
       "desktop"
     ]
@@ -67,6 +71,21 @@
     },
     "source": "setups/<id>/config.toml"
   },
+  "plugin_marketplace": {
+    "contract_ref": "config/nddev-contract.json:plugin_marketplace",
+    "marketplace_id": "nddev-builder",
+    "marketplace_manifest": ".agents/plugins/marketplace.json",
+    "plugin_id": "nddev-builder",
+    "plugin_manifest": "plugins/nddev-builder/.codex-plugin/plugin.json",
+    "plugin_version_ref": "build/version.json:nddev_builder_plugin_version",
+    "profile": "nddev-builder.config.toml",
+    "profile_selection": "--profile nddev-builder",
+    "install_command": "python3 cli-tools/nddev_codex.py install-builder --target <absolute-target> [--json]",
+    "status_command": "python3 cli-tools/nddev_codex.py builder-status --target <absolute-target> [--json]",
+    "primary_config_restored_after_install": true,
+    "runtime_owned_cache": true,
+    "cache_validation": "bounded-exact-source-tree"
+  },
   "runtime_compatibility": {
     "baseline_ref": "references/codex-baseline.json",
     "permission_profiles_status": "beta",
@@ -88,7 +107,7 @@
     "target_environment_scope": "child-process-only",
     "target_must_equal_runtime_home": true
   },
-  "schema_version": 2,
+  "schema_version": 3,
   "setup_ids": [
     "safe",
     "full-auto"

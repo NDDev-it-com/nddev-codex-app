@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex App Creator"
+  short_description: "Create validated Codex app connector declarations"
+  default_prompt: "Use $codex-app-creator to create and validate a native Codex app connector manifest."

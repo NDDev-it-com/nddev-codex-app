@@ -4,8 +4,8 @@
 
 Security reporting covers the setup catalog, target-owned Codex CLI installer,
 lifecycle CLI, upstream desktop-bridge delegation, public contracts,
-documentation, and GitHub workflows in this repository. Only the latest
-numeric release is supported.
+documentation, the `nddev-builder` marketplace artifacts, and GitHub workflows
+in this repository. Only the latest numeric release is supported.
 
 ## Reporting a vulnerability
 
@@ -26,9 +26,11 @@ days. These targets are best-effort.
   absolute `--target`.
 - The target, its managed files, backup pool, and catalog reject unsafe
   symlinks and special files. Managed files also reject hard-link aliases.
-- Inside the target, only `config.toml`, `AGENTS.md`, and
-  `NDDEV-CODEX-SETUP.json` are changed. Sibling lock, staging, recovery, and
-  backup paths follow the separately documented transaction contract.
+- The setup lifecycle changes only `config.toml`, `AGENTS.md`, and
+  `NDDEV-CODEX-SETUP.json` inside the target. The software and builder
+  lifecycles own only their separately documented standalone, profile, and
+  plugin-cache paths. Sibling lock, staging, recovery, and backup paths follow
+  the separately documented transaction contract.
 - Existing target directory modes are preserved; newly created targets use
   mode `0700`, and managed files and backup payloads require mode `0600`.
 - `status` reports a target-level `AGENTS.override.md`; setup planning,
@@ -57,6 +59,19 @@ days. These targets are best-effort.
 - On macOS, `desktop` delegates only to `codex app` with an optional validated
   workspace. It does not expose arbitrary download/source flags, implement a
   desktop updater, or claim that the GUI inherits the selected `CODEX_HOME`.
+- The builder generator refuses symlinked output paths and implicit overwrite,
+  stages complete creation plans through anchored no-follow descriptors, writes
+  mode `0600`, and rolls back multi-file failures byte-for-byte. Its checker
+  uses bounded fail-closed traversal and reads stable regular files through
+  no-follow descriptors. Static checks do not replace Codex runtime discovery,
+  hook trust review, MCP authentication, or application security.
+- Marketplace registration and plugin installation are performed by the
+  target-owned Codex CLI. Codex owns the bounded, exact-validated cache; the
+  manager owns a separate `nddev-builder.config.toml` activation profile and
+  restores the primary setup config byte-for-byte. A failed installation also
+  restores the bounded versioned cache tree without touching unrelated plugin
+  state. Both remain outside setup backup/restore and persist independently
+  across setup switching or removal.
 - Public workflows use least privilege and immutable action/workflow pins.
 - Full behavioral, mutation, platform, and release validation remains in the
   private NDDev harness; no private fixtures or evidence are distributed here.

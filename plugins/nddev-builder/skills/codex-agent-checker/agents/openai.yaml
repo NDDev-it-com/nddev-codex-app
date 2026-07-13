@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Agent Checker"
+  short_description: "Check Codex agent TOML, scope, and delegation safety"
+  default_prompt: "Use $codex-agent-checker to validate this Codex custom agent and its delegation contract."

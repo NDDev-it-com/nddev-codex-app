@@ -2,6 +2,27 @@
 
 All notable changes to this project are documented here.
 
+## 0.3.0 - 2026-07-13
+
+### Added
+
+- Native `nddev-builder` marketplace and plugin with focused creator/checker
+  skills for every supported Codex artifact family.
+- Dependency-free artifact generator and static checker with transactional
+  owner-only creation, bounded no-follow reads, and conservative overwrite,
+  path, secret, permission-model, and schema guards.
+- Official Codex marketplace installation contract that keeps plugin-owned
+  state independent from the transactional `safe`/`full-auto` setup lifecycle.
+- `install-builder` and `builder-status` lifecycle commands with a deterministic
+  profile, exact bounded cache-tree validation, idempotence, and transactional
+  configuration/profile/cache rollback.
+
+### Changed
+
+- Extended the public machine contract and manifest with the builder
+  marketplace boundary, inventory, paths, version reference, and official
+  documentation provenance.
+
 ## 0.2.1 - 2026-07-13
 
 ### Fixed

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Config Creator"
+  short_description: "Create clean, current Codex TOML configuration"
+  default_prompt: "Use $codex-config-creator to create and validate a scoped Codex configuration."

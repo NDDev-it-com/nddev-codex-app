@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Hook Creator"
+  short_description: "Create safe, bounded native Codex lifecycle hooks"
+  default_prompt: "Use $codex-hook-creator to create and validate a native Codex hook."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex MCP Creator"
+  short_description: "Create reproducible Codex MCP server definitions"
+  default_prompt: "Use $codex-mcp-creator to create and validate a native Codex MCP definition."

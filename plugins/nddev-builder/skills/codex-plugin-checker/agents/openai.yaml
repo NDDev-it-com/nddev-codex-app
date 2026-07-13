@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Plugin Checker"
+  short_description: "Check Codex plugin manifests and bundled capabilities"
+  default_prompt: "Use $codex-plugin-checker to validate this Codex plugin and its bundled capabilities."

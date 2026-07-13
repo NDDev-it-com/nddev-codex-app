@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Rule Checker"
+  short_description: "Check Codex execpolicy rules for scope and bypasses"
+  default_prompt: "Use $codex-rule-checker to validate these Codex execpolicy rules against bypass cases."
