@@ -15,7 +15,7 @@ agents. It never infers or defaults to `~/.codex`.
 
 ## Requirements
 
-- Python 3.11 or newer
+- Python 3.10 or newer
 - an absolute, explicit target path for every command that reads or changes a
   Codex home
 

@@ -13,7 +13,6 @@ import shutil
 import stat
 import sys
 import tempfile
-import tomllib
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, NoReturn
@@ -32,6 +31,10 @@ SEMVER_PATTERN = re.compile(
     r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
     r"(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\Z"
+)
+PERMISSION_CONFIG_KEYS = ("default_permissions", "approval_policy")
+PERMISSION_CONFIG_LINE_PATTERN = re.compile(
+    r'(?P<key>[A-Za-z_][A-Za-z0-9_]*) = "(?P<value>[^"\\\r\n]*)"\Z'
 )
 STAMP_KEYS = {
     "schema_version",
@@ -113,6 +116,30 @@ def validate_setup_id(setup_id: str) -> None:
         fail(f"invalid setup id: {setup_id!r}")
 
 
+def parse_permission_config(content: str, label: str) -> dict[str, str]:
+    if not content.endswith("\n") or "\r" in content:
+        fail(f"{label} must be LF-terminated text")
+    lines = content.splitlines()
+    if len(lines) != len(PERMISSION_CONFIG_KEYS) or any(not line for line in lines):
+        fail(f"{label} must contain exactly two non-empty lines")
+
+    config: dict[str, str] = {}
+    for line_number, line in enumerate(lines, start=1):
+        match = PERMISSION_CONFIG_LINE_PATTERN.fullmatch(line)
+        if match is None:
+            fail(f"{label} has malformed line {line_number}")
+        key = match.group("key")
+        if key not in PERMISSION_CONFIG_KEYS:
+            fail(f"{label} has unknown key {key!r}")
+        if key in config:
+            fail(f"{label} has duplicate key {key!r}")
+        config[key] = match.group("value")
+
+    if tuple(config) != PERMISSION_CONFIG_KEYS:
+        fail(f"{label} keys must appear in the canonical order")
+    return config
+
+
 def render_setup(setup_id: str) -> tuple[dict[str, Any], dict[str, bytes]]:
     validate_setup_id(setup_id)
     setup_root = CATALOG_ROOT / setup_id
@@ -150,19 +177,10 @@ def render_setup(setup_id: str) -> tuple[dict[str, Any], dict[str, bytes]]:
             fail(f"setup {setup_id}/{name} must be non-empty LF-terminated text")
         rendered[name] = content
 
-    try:
-        config = tomllib.loads(rendered["config.toml"].decode("utf-8"))
-    except tomllib.TOMLDecodeError as exc:
-        fail(f"setup {setup_id}/config.toml is invalid TOML: {exc}")
-    if set(config) != {"default_permissions", "approval_policy"}:
-        fail(
-            f"setup {setup_id}/config.toml may define only "
-            "default_permissions and approval_policy"
-        )
-    if not isinstance(config["default_permissions"], str):
-        fail(f"setup {setup_id}/config.toml default_permissions must be a string")
-    if not isinstance(config["approval_policy"], str):
-        fail(f"setup {setup_id}/config.toml approval_policy must be a string")
+    config = parse_permission_config(
+        rendered["config.toml"].decode("utf-8"),
+        f"setup {setup_id}/config.toml",
+    )
     expected_permissions = {
         "safe": (":read-only", "on-request"),
         "full-auto": (":danger-full-access", "never"),

@@ -48,7 +48,7 @@ jobs:
           import pathlib
           import py_compile
           import re
-          import tomllib
+          import runpy
 
           semver = re.compile(
               r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
@@ -68,12 +68,16 @@ jobs:
               "safe": (":read-only", "on-request"),
               "full-auto": (":danger-full-access", "never"),
           }
+          parse_permission_config = runpy.run_path(
+              "cli-tools/nddev_codex.py"
+          )["parse_permission_config"]
           for setup_id, values in expected.items():
-              config = tomllib.loads(
-                  pathlib.Path(f"setups/{setup_id}/config.toml").read_text()
+              path = pathlib.Path(f"setups/{setup_id}/config.toml")
+              config = parse_permission_config(
+                  path.read_text(encoding="utf-8"), str(path)
               )
-              actual = (config.get("default_permissions"), config.get("approval_policy"))
-              if set(config) != {"default_permissions", "approval_policy"} or actual != values:
+              actual = (config["default_permissions"], config["approval_policy"])
+              if actual != values:
                   raise SystemExit(f"invalid permission contract for {setup_id}")
           py_compile.compile("cli-tools/nddev_codex.py", doraise=True)
           PY
