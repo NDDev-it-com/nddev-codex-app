@@ -18,10 +18,10 @@ jobs:
   codeql:
     name: CodeQL
     permissions:
-      contents: read
-      security-events: write
-      actions: read
-    uses: NDDev-it-com/nddev-ci-workflows/.github/workflows/public-codeql.yml@8b8e3ea6321c912b68eec831c2072a0173203433 # 0.8.1
+      contents: read # Analyze repository source and workflow definitions.
+      security-events: write # Upload the CodeQL SARIF results.
+      actions: read # Read workflow metadata required by CodeQL analysis.
+    uses: NDDev-it-com/nddev-ci-workflows/.github/workflows/public-codeql.yml@eb7bd953dc9741e559cb9e357c2d36c9b4de5a88 # 0.10.0
     with:
       languages: '["python", "actions"]'
       queries: security-and-quality
