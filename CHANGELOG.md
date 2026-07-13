@@ -8,8 +8,9 @@ All notable changes to this project are documented here.
 
 - Native `nddev-builder` marketplace and plugin with focused creator/checker
   skills for every supported Codex artifact family.
-- Dependency-free artifact generator and static checker with conservative
-  overwrite, path, secret, permission-model, and schema guards.
+- Dependency-free artifact generator and static checker with transactional
+  owner-only creation, bounded no-follow reads, and conservative overwrite,
+  path, secret, permission-model, and schema guards.
 - Official Codex marketplace installation contract that keeps plugin-owned
   state independent from the transactional `safe`/`full-auto` setup lifecycle.
 - `install-builder` and `builder-status` lifecycle commands with a deterministic

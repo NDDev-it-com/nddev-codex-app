@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import errno
 import json
 import os
 import re
@@ -51,6 +52,9 @@ MAX_TEXT_BYTES = 1024 * 1024
 MAX_ARTIFACT_BYTES = 8 * 1024 * 1024
 MAX_INSTRUCTIONS_BYTES = 32 * 1024
 MAX_DISCOVERED_ARTIFACTS = 4096
+MAX_TRAVERSED_ENTRIES = 32768
+MAX_INSPECTED_BYTES = 64 * 1024 * 1024
+READ_CHUNK_BYTES = 64 * 1024
 
 HOOK_EVENTS = {
     "SessionStart",
@@ -244,10 +248,16 @@ HIGH_CONFIDENCE_SECRET_RES = (
     re.compile(r"github_" + r"pat_[A-Za-z0-9_]{20,}"),
 )
 OPENAI_SECRET_RE = re.compile(r"sk-" + r"[A-Za-z0-9_-]{20,}")
-OPENAI_EXAMPLE_SECRET_RE = re.compile(
-    r"sk-(?:example|sample|dummy|placeholder|redacted|test)"
-    r"(?:[-_][A-Za-z0-9_-]+)*\Z",
-    re.IGNORECASE,
+OPENAI_EXAMPLE_SECRET_MARKERS = (
+    "example",
+    "sample",
+    "dummy",
+    "placeholder",
+    "redacted",
+    "test",
+)
+OPENAI_EXAMPLE_SECRET_SUFFIX_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-"
 )
 SECRET_ASSIGNMENT_RE = re.compile(
     r"(?im)^[ \t]*(?:[\"']?)(api[_-]?key|client[_-]?secret|access[_-]?token|"
@@ -396,9 +406,55 @@ class Finding:
 
 
 @dataclass
+class ScanBudget:
+    """One deterministic resource budget shared by a validation operation."""
+
+    max_entries: int = MAX_TRAVERSED_ENTRIES
+    max_bytes: int = MAX_INSPECTED_BYTES
+    traversed_entries: int = 0
+    inspected_bytes: int = 0
+    exhausted: bool = False
+
+    def consume_entry(self, report: ArtifactReport, path: Path) -> bool:
+        if self.exhausted:
+            return False
+        if self.traversed_entries >= self.max_entries:
+            self.exhausted = True
+            report.error(
+                "scan-entry-limit",
+                path,
+                f"validation exceeds the aggregate limit of {self.max_entries} entries",
+            )
+            return False
+        self.traversed_entries += 1
+        return True
+
+    def can_inspect(self, report: ArtifactReport, path: Path, size: int) -> bool:
+        if self.exhausted:
+            return False
+        remaining = self.max_bytes - self.inspected_bytes
+        if size > remaining:
+            self.exhausted = True
+            report.error(
+                "scan-byte-limit",
+                path,
+                f"validation exceeds the aggregate limit of {self.max_bytes} inspected bytes",
+            )
+            return False
+        return True
+
+    def consume_bytes(self, report: ArtifactReport, path: Path, size: int) -> bool:
+        if not self.can_inspect(report, path, size):
+            return False
+        self.inspected_bytes += size
+        return True
+
+
+@dataclass
 class ArtifactReport:
     kind: str
     path: Path
+    budget: ScanBudget = field(default_factory=ScanBudget, repr=False)
     errors: list[Finding] = field(default_factory=list)
     warnings: list[Finding] = field(default_factory=list)
     checked_files: set[str] = field(default_factory=set, repr=False)
@@ -521,12 +577,31 @@ def _preflight_path(report: ArtifactReport, path: Path, *, directory: bool | Non
     return True
 
 
+def _walk_onerror(report: ArtifactReport, root: Path) -> Callable[[OSError], None]:
+    def record(exc: OSError) -> None:
+        raw_path = exc.filename if isinstance(exc.filename, (str, bytes)) else str(root)
+        if isinstance(raw_path, bytes):
+            raw_path = os.fsdecode(raw_path)
+        report.error("unreadable", _absolute_path(raw_path), "cannot traverse directory")
+
+    return record
+
+
 def _walk_real_files(report: ArtifactReport, root: Path) -> Iterable[Path]:
-    for current_raw, directories, files in os.walk(root, followlinks=False):
+    if not report.budget.consume_entry(report, root):
+        return
+    for current_raw, directories, files in os.walk(
+        root,
+        followlinks=False,
+        onerror=_walk_onerror(report, root),
+    ):
         current = Path(current_raw)
         kept_directories: list[str] = []
         for name in sorted(directories):
             candidate = current / name
+            if not report.budget.consume_entry(report, candidate):
+                directories[:] = []
+                return
             if _is_symlink(candidate):
                 report.error("symlink", candidate, "symlink artifacts are not allowed")
             else:
@@ -534,6 +609,9 @@ def _walk_real_files(report: ArtifactReport, root: Path) -> Iterable[Path]:
         directories[:] = kept_directories
         for name in sorted(files):
             candidate = current / name
+            if not report.budget.consume_entry(report, candidate):
+                directories[:] = []
+                return
             if _is_symlink(candidate):
                 report.error("symlink", candidate, "symlink artifacts are not allowed")
                 continue
@@ -564,23 +642,142 @@ def _looks_textual(path: Path) -> bool:
     )
 
 
+def _fd_path(path: Path) -> Path:
+    """Map only Apple's root-owned compatibility aliases to their real path."""
+    absolute = _absolute_path(path)
+    if sys.platform != "darwin" or len(absolute.parts) < 2:
+        return absolute
+    alias = Path(absolute.anchor) / absolute.parts[1]
+    try:
+        info = alias.lstat()
+    except OSError:
+        return absolute
+    if not stat.S_ISLNK(info.st_mode) or not _is_macos_system_alias(alias, info):
+        return absolute
+    return Path("/private") / Path(*absolute.parts[1:])
+
+
+def _open_parent_nofollow(path: Path) -> tuple[int, str]:
+    """Open a file's parent one lexical directory at a time without symlinks."""
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory = getattr(os, "O_DIRECTORY", 0)
+    if not nofollow or not directory or os.open not in os.supports_dir_fd:
+        raise OSError(errno.ENOTSUP, "anchored no-follow file access is unavailable", str(path))
+
+    absolute = _fd_path(path)
+    if len(absolute.parts) < 2:
+        raise OSError(errno.EINVAL, "file path has no leaf component", str(path))
+    flags = os.O_RDONLY | nofollow | directory | getattr(os, "O_CLOEXEC", 0)
+    current_fd = os.open(absolute.anchor, flags)
+    try:
+        for component in absolute.parts[1:-1]:
+            next_fd = os.open(component, flags, dir_fd=current_fd)
+            os.close(current_fd)
+            current_fd = next_fd
+    except BaseException:
+        os.close(current_fd)
+        raise
+    return current_fd, absolute.name
+
+
+def _file_identity(info: os.stat_result) -> tuple[int, int, int]:
+    return info.st_dev, info.st_ino, stat.S_IFMT(info.st_mode)
+
+
+def _file_state(info: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    return (
+        *_file_identity(info),
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+
+
+def _read_error(report: ArtifactReport, path: Path, exc: OSError) -> None:
+    if exc.errno == errno.ELOOP:
+        report.error("symlink", path, "symlink artifacts and path components are not allowed")
+    else:
+        report.error("unreadable", path, f"cannot safely read file: {exc}")
+
+
 def _read_bytes(report: ArtifactReport, path: Path, limit: int) -> bytes | None:
+    """Read one stable regular file through an anchored, no-follow descriptor."""
+    if report.budget.exhausted:
+        return None
     if _symlink_component(path) is not None:
         report.error("symlink", path, "symlink artifacts are not allowed")
         return None
+
+    parent_fd: int | None = None
+    file_fd: int | None = None
     try:
-        size = path.stat().st_size
+        parent_fd, leaf = _open_parent_nofollow(path)
+        parent_before = os.fstat(parent_fd)
+        flags = (
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NONBLOCK", 0)
+        )
+        file_fd = os.open(leaf, flags, dir_fd=parent_fd)
+        before = os.fstat(file_fd)
     except OSError as exc:
-        report.error("unreadable", path, f"cannot inspect file: {exc}")
-        return None
-    if size > limit:
-        report.error("oversized", path, f"file exceeds {limit} bytes")
+        _read_error(report, path, exc)
         return None
     try:
-        return path.read_bytes()
+        if not stat.S_ISREG(before.st_mode):
+            report.error("type", path, "artifact must be a regular file")
+            return None
+        if before.st_size > limit:
+            report.error("oversized", path, f"file exceeds {limit} bytes")
+            return None
+        # Charge the declared extent before reading. This intentionally
+        # over-counts truncated/erroring files rather than letting failed reads
+        # bypass the aggregate byte ceiling.
+        if not report.budget.consume_bytes(report, path, before.st_size):
+            return None
+
+        data = bytearray()
+        while len(data) < before.st_size:
+            chunk = os.read(file_fd, min(READ_CHUNK_BYTES, before.st_size - len(data)))
+            if not chunk:
+                report.error("changed-during-read", path, "file changed while it was being read")
+                return None
+            data.extend(chunk)
+        growth_probe = os.read(file_fd, 1)
+        if growth_probe:
+            report.budget.consume_bytes(report, path, len(growth_probe))
+            report.error("changed-during-read", path, "file grew while it was being read")
+            return None
+
+        after = os.fstat(file_fd)
+        post_parent_fd, post_leaf = _open_parent_nofollow(path)
+        try:
+            post_parent = os.fstat(post_parent_fd)
+            bound = os.stat(post_leaf, dir_fd=post_parent_fd, follow_symlinks=False)
+        finally:
+            os.close(post_parent_fd)
+        if _file_identity(post_parent) != _file_identity(parent_before):
+            report.error("changed-during-read", path, "file parent binding changed while reading")
+            return None
+        if stat.S_ISLNK(bound.st_mode):
+            report.error("symlink", path, "file was replaced by a symlink while reading")
+            return None
+        if _file_state(after) != _file_state(before):
+            report.error("changed-during-read", path, "file changed while it was being read")
+            return None
+        if _file_state(bound) != _file_state(before):
+            report.error("changed-during-read", path, "file path binding changed while reading")
+            return None
+        return bytes(data)
     except OSError as exc:
-        report.error("unreadable", path, f"cannot read file: {exc}")
+        _read_error(report, path, exc)
         return None
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        if parent_fd is not None:
+            os.close(parent_fd)
 
 
 def _safe_secret_value(value: str) -> bool:
@@ -598,9 +795,28 @@ def _safe_secret_value(value: str) -> bool:
         return True
     if re.fullmatch(r"<[A-Za-z0-9][A-Za-z0-9_-]*>", normalized):
         return True
-    if OPENAI_EXAMPLE_SECRET_RE.fullmatch(normalized):
+    if _is_openai_example_secret(normalized):
         return True
     return lowered in SAFE_SECRET_PLACEHOLDERS
+
+
+def _is_openai_example_secret(value: str) -> bool:
+    lowered = value.lower()
+    if not lowered.startswith("sk-"):
+        return False
+    tail = lowered[3:]
+    for marker in OPENAI_EXAMPLE_SECRET_MARKERS:
+        if tail == marker:
+            return True
+        if not tail.startswith(marker):
+            continue
+        suffix = tail[len(marker) :]
+        return (
+            len(suffix) >= 2
+            and suffix[0] in "-_"
+            and all(character in OPENAI_EXAMPLE_SECRET_SUFFIX_CHARS for character in suffix)
+        )
+    return False
 
 
 def _scan_text(report: ArtifactReport, path: Path, text: str) -> None:
@@ -611,7 +827,7 @@ def _scan_text(report: ArtifactReport, path: Path, text: str) -> None:
             report.error("inline-secret", path, "high-confidence inline secret found")
             break
     for match in OPENAI_SECRET_RE.finditer(text):
-        if OPENAI_EXAMPLE_SECRET_RE.fullmatch(match.group(0)) is None:
+        if not _is_openai_example_secret(match.group(0)):
             report.error("inline-secret", path, "high-confidence inline secret found")
             break
     for match in SECRET_ASSIGNMENT_RE.finditer(text):
@@ -1295,8 +1511,8 @@ def _validate_openai_metadata(
                 )
 
 
-def _validate_skill_root(root: Path) -> ArtifactReport:
-    report = ArtifactReport("skill", root)
+def _validate_skill_root(root: Path, *, budget: ScanBudget | None = None) -> ArtifactReport:
+    report = ArtifactReport("skill", root, budget=budget or ScanBudget())
     if not _preflight_path(report, root, directory=True):
         return report
     _scan_tree(report, root)
@@ -1345,8 +1561,13 @@ def _validate_skill_root(root: Path) -> ArtifactReport:
     return report
 
 
-def _validate_app_file(path: Path, report: ArtifactReport | None = None) -> ArtifactReport:
-    own_report = report or ArtifactReport("app", path)
+def _validate_app_file(
+    path: Path,
+    report: ArtifactReport | None = None,
+    *,
+    budget: ScanBudget | None = None,
+) -> ArtifactReport:
+    own_report = report or ArtifactReport("app", path, budget=budget or ScanBudget())
     if not _preflight_path(own_report, path, directory=False):
         return own_report
     payload = _load_json(own_report, path)
@@ -1619,8 +1840,10 @@ def _validate_hook_file(
     path: Path,
     report: ArtifactReport | None = None,
     plugin_root: Path | None = None,
+    *,
+    budget: ScanBudget | None = None,
 ) -> ArtifactReport:
-    own_report = report or ArtifactReport("hook", path)
+    own_report = report or ArtifactReport("hook", path, budget=budget or ScanBudget())
     if plugin_root is None and path.parent.name == "hooks":
         plugin_root = path.parent.parent
     if not _preflight_path(own_report, path, directory=False):
@@ -1971,8 +2194,13 @@ def _validate_mcp_servers(report: ArtifactReport, path: Path, servers: Any, base
                     )
 
 
-def _validate_mcp_file(path: Path, report: ArtifactReport | None = None) -> ArtifactReport:
-    own_report = report or ArtifactReport("mcp", path)
+def _validate_mcp_file(
+    path: Path,
+    report: ArtifactReport | None = None,
+    *,
+    budget: ScanBudget | None = None,
+) -> ArtifactReport:
+    own_report = report or ArtifactReport("mcp", path, budget=budget or ScanBudget())
     if not _preflight_path(own_report, path, directory=False):
         return own_report
     payload = _load_json(own_report, path)
@@ -2013,12 +2241,34 @@ def _validate_plugin_native_boundaries(report: ArtifactReport, root: Path) -> No
             f"plugin root must not bundle `{name}`; Codex workflows are skills and custom agents are standalone TOML",
         )
 
-    for current_raw, directories, files in os.walk(root, followlinks=False):
+    if not report.budget.consume_entry(report, root):
+        return
+    for current_raw, directories, files in os.walk(
+        root,
+        followlinks=False,
+        onerror=_walk_onerror(report, root),
+    ):
         current = Path(current_raw)
-        directories[:] = [name for name in directories if not _is_symlink(current / name)]
-        for name in files:
+        kept_directories: list[str] = []
+        for name in sorted(directories):
             candidate = current / name
-            if candidate.suffix.lower() != ".toml" or _is_symlink(candidate):
+            if not report.budget.consume_entry(report, candidate):
+                directories[:] = []
+                return
+            if _is_symlink(candidate):
+                report.error("symlink", candidate, "symlink artifacts are not allowed")
+            else:
+                kept_directories.append(name)
+        directories[:] = kept_directories
+        for name in sorted(files):
+            candidate = current / name
+            if not report.budget.consume_entry(report, candidate):
+                directories[:] = []
+                return
+            if _is_symlink(candidate):
+                report.error("symlink", candidate, "symlink artifacts are not allowed")
+                continue
+            if candidate.suffix.lower() != ".toml":
                 continue
             relative = candidate.relative_to(root)
             if "agents" in relative.parts:
@@ -2081,8 +2331,8 @@ def _validate_plugin_hooks(
             _validate_hook_payload(entry, report, manifest_path, root)
 
 
-def _validate_plugin_root(root: Path) -> ArtifactReport:
-    report = ArtifactReport("plugin", root)
+def _validate_plugin_root(root: Path, *, budget: ScanBudget | None = None) -> ArtifactReport:
+    report = ArtifactReport("plugin", root, budget=budget or ScanBudget())
     if not _preflight_path(report, root, directory=True):
         return report
     _scan_tree(report, root)
@@ -2146,7 +2396,7 @@ def _validate_plugin_root(root: Path) -> ArtifactReport:
             if _is_symlink(candidate):
                 report.error("symlink", candidate, "plugin skills must not be symlinks")
             elif candidate.is_dir():
-                child = _validate_skill_root(candidate)
+                child = _validate_skill_root(candidate, budget=report.budget)
                 report.errors.extend(child.errors)
                 report.warnings.extend(child.warnings)
 
@@ -2251,8 +2501,8 @@ def _marketplace_base(path: Path) -> Path:
     return path.parent
 
 
-def _validate_marketplace_file(path: Path) -> ArtifactReport:
-    report = ArtifactReport("marketplace", path)
+def _validate_marketplace_file(path: Path, *, budget: ScanBudget | None = None) -> ArtifactReport:
+    report = ArtifactReport("marketplace", path, budget=budget or ScanBudget())
     if not _preflight_path(report, path, directory=False):
         return report
     payload = _load_json(report, path)
@@ -2327,7 +2577,7 @@ def _validate_marketplace_file(path: Path) -> ArtifactReport:
                         )
                 else:
                     report.error("missing-reference", plugin_root, "local plugin lacks plugin.json")
-                plugin_report = _validate_plugin_root(plugin_root)
+                plugin_report = _validate_plugin_root(plugin_root, budget=report.budget)
                 report.errors.extend(plugin_report.errors)
                 report.warnings.extend(plugin_report.warnings)
         policy = entry.get("policy")
@@ -2513,8 +2763,8 @@ def _config_key_checks(
     return keys
 
 
-def _validate_agent_file(path: Path) -> ArtifactReport:
-    report = ArtifactReport("agent", path)
+def _validate_agent_file(path: Path, *, budget: ScanBudget | None = None) -> ArtifactReport:
+    report = ArtifactReport("agent", path, budget=budget or ScanBudget())
     if not _preflight_path(report, path, directory=False):
         return report
     payload, text = _load_toml(report, path)
@@ -2556,8 +2806,8 @@ def _validate_agent_file(path: Path) -> ArtifactReport:
     return report
 
 
-def _validate_config_file(path: Path) -> ArtifactReport:
-    report = ArtifactReport("config", path)
+def _validate_config_file(path: Path, *, budget: ScanBudget | None = None) -> ArtifactReport:
+    report = ArtifactReport("config", path, budget=budget or ScanBudget())
     if not _preflight_path(report, path, directory=False):
         return report
     payload, text = _load_toml(report, path)
@@ -2574,8 +2824,8 @@ def _validate_config_file(path: Path) -> ArtifactReport:
     return report
 
 
-def _validate_instructions_file(path: Path) -> ArtifactReport:
-    report = ArtifactReport("instructions", path)
+def _validate_instructions_file(path: Path, *, budget: ScanBudget | None = None) -> ArtifactReport:
+    report = ArtifactReport("instructions", path, budget=budget or ScanBudget())
     if not _preflight_path(report, path, directory=False):
         return report
     text = _read_text(report, path, limit=MAX_INSTRUCTIONS_BYTES)
@@ -2634,8 +2884,8 @@ def _rule_pattern_matches(tokens: list[str], pattern: list[str | list[str]]) -> 
     return True
 
 
-def _validate_rule_file(path: Path) -> ArtifactReport:
-    report = ArtifactReport("rule", path)
+def _validate_rule_file(path: Path, *, budget: ScanBudget | None = None) -> ArtifactReport:
+    report = ArtifactReport("rule", path, budget=budget or ScanBudget())
     if not _preflight_path(report, path, directory=False):
         return report
     text = _read_text(report, path)
@@ -2789,7 +3039,7 @@ def _resolve_specific_path(kind: str, raw_path: Path) -> Path:
     return path
 
 
-VALIDATORS: dict[str, Callable[[Path], ArtifactReport]] = {
+VALIDATORS: dict[str, Callable[..., ArtifactReport]] = {
     "skill": _validate_skill_root,
     "plugin": _validate_plugin_root,
     "marketplace": _validate_marketplace_file,
@@ -2831,16 +3081,28 @@ def _artifact_candidate(path: Path) -> tuple[str, Path] | None:
     return None
 
 
-def _discover(root: Path) -> tuple[list[tuple[str, Path]], list[Path]]:
+def _discover(
+    root: Path,
+    report: ArtifactReport,
+) -> tuple[list[tuple[str, Path]], list[Path]]:
     artifacts: set[tuple[str, Path]] = set()
     symlinks: list[Path] = []
-    for current_raw, directories, files in os.walk(root, followlinks=False):
+    if not report.budget.consume_entry(report, root):
+        return [], []
+    for current_raw, directories, files in os.walk(
+        root,
+        followlinks=False,
+        onerror=_walk_onerror(report, root),
+    ):
         current = Path(current_raw)
         kept: list[str] = []
         for name in sorted(directories):
             candidate = current / name
             if name in SKIP_DISCOVERY_DIRS:
                 continue
+            if not report.budget.consume_entry(report, candidate):
+                directories[:] = []
+                return sorted(artifacts), sorted(symlinks)
             if _is_symlink(candidate):
                 symlinks.append(candidate)
             else:
@@ -2848,31 +3110,39 @@ def _discover(root: Path) -> tuple[list[tuple[str, Path]], list[Path]]:
         directories[:] = kept
         for name in sorted(files):
             candidate = current / name
+            if not report.budget.consume_entry(report, candidate):
+                directories[:] = []
+                return sorted(artifacts), sorted(symlinks)
             if _is_symlink(candidate):
                 if _artifact_candidate(candidate) is not None:
                     symlinks.append(candidate)
                 continue
             artifact = _artifact_candidate(candidate)
             if artifact is not None:
-                artifacts.add(artifact)
-                if len(artifacts) > MAX_DISCOVERED_ARTIFACTS:
-                    raise RuntimeError(
-                        f"artifact discovery exceeds the safety limit of {MAX_DISCOVERED_ARTIFACTS}"
+                if artifact not in artifacts and len(artifacts) >= MAX_DISCOVERED_ARTIFACTS:
+                    report.error(
+                        "artifact-limit",
+                        candidate,
+                        "artifact discovery exceeds the safety limit of "
+                        f"{MAX_DISCOVERED_ARTIFACTS}",
                     )
+                    directories[:] = []
+                    return sorted(artifacts), sorted(symlinks)
+                artifacts.add(artifact)
     return sorted(artifacts, key=lambda item: (item[0], str(item[1]))), sorted(symlinks)
 
 
-def _validate_all(root: Path) -> list[ArtifactReport]:
-    discovery = ArtifactReport("all", root)
+def _validate_all(root: Path, *, budget: ScanBudget | None = None) -> list[ArtifactReport]:
+    discovery = ArtifactReport("all", root, budget=budget or ScanBudget())
     if not _preflight_path(discovery, root, directory=True):
         return [discovery]
-    artifacts, symlinks = _discover(root)
+    artifacts, symlinks = _discover(root, discovery)
     for path in symlinks:
         discovery.error("symlink", path, "symlink artifacts are not allowed")
     if not artifacts:
         discovery.error("no-artifacts", root, "no supported Codex artifacts were discovered")
         return [discovery]
-    reports = [VALIDATORS[kind](path) for kind, path in artifacts]
+    reports = [VALIDATORS[kind](path, budget=discovery.budget) for kind, path in artifacts]
     if discovery.errors or discovery.warnings:
         reports.insert(0, discovery)
     return reports

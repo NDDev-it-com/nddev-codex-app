@@ -40,7 +40,9 @@ generator requires a lowercase hyphen-case `--name`, a one-line
 `--description`, and an output parent/root. Agent names additionally accept the
 underscore-separated identifiers used by official Codex examples; their output
 filenames remain hyphenated. Existing files are preserved unless `--force` is
-explicit.
+explicit. Every creation plan is staged completely before commit, writes
+owner-only regular files through anchored no-follow directory descriptors, and
+restores all prior bytes and modes if any multi-file commit fails.
 
 ```bash
 python3 scripts/create_codex_artifact.py skill \
@@ -65,7 +67,9 @@ PASS.
 
 Generated output is a starting point, not proof of product quality. Complete
 the workflow-specific content, run the matching checker, then perform the
-runtime check named in the artifact contract.
+runtime check named in the artifact contract. Static scans are fail-closed on
+unreadable or raced paths and share bounded entry and byte budgets; a static
+PASS never substitutes for runtime discovery or behavior.
 
 ## Install boundary
 

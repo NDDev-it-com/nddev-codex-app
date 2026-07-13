@@ -59,9 +59,12 @@ days. These targets are best-effort.
 - On macOS, `desktop` delegates only to `codex app` with an optional validated
   workspace. It does not expose arbitrary download/source flags, implement a
   desktop updater, or claim that the GUI inherits the selected `CODEX_HOME`.
-- The builder generator refuses symlinked output paths and implicit overwrite;
-  its checker is static defense in depth, not a replacement for Codex runtime
-  discovery, hook trust review, MCP authentication, or application security.
+- The builder generator refuses symlinked output paths and implicit overwrite,
+  stages complete creation plans through anchored no-follow descriptors, writes
+  mode `0600`, and rolls back multi-file failures byte-for-byte. Its checker
+  uses bounded fail-closed traversal and reads stable regular files through
+  no-follow descriptors. Static checks do not replace Codex runtime discovery,
+  hook trust review, MCP authentication, or application security.
 - Marketplace registration and plugin installation are performed by the
   target-owned Codex CLI. Codex owns the bounded, exact-validated cache; the
   manager owns a separate `nddev-builder.config.toml` activation profile and

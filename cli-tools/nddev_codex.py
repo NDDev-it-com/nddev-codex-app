@@ -3552,17 +3552,25 @@ def remove_builder_cache_tree(root: Path, label: str) -> None:
             os.unlink(quarantine_name, dir_fd=parent_fd)
         moved = False
         os.fsync(parent_fd)
-    except BaseException:
-        if moved and not mutation_started and not entry_exists_at(parent_fd, root.name):
+    except BaseException as operation_error:
+        recovery_error: BaseException | None = None
+        if moved and not mutation_started:
             try:
-                anchored_rename(
-                    quarantine_name,
-                    root.name,
-                    source_fd=parent_fd,
-                    destination_fd=parent_fd,
-                )
-            except OSError:
-                pass
+                if not entry_exists_at(parent_fd, root.name):
+                    anchored_rename(
+                        quarantine_name,
+                        root.name,
+                        source_fd=parent_fd,
+                        destination_fd=parent_fd,
+                    )
+            except BaseException as exc:
+                recovery_error = exc
+        if recovery_error is not None:
+            raise CodexSetupError(
+                f"{label} removal failed and rollback quarantine restoration also failed: "
+                f"{type(operation_error).__name__}: {operation_error}; "
+                f"quarantined entry preserved at {parent / quarantine_name}"
+            ) from recovery_error
         raise
     finally:
         os.close(parent_fd)
