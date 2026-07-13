@@ -2529,6 +2529,28 @@ def read_package_metadata(path: Path) -> dict[str, Any]:
     return metadata
 
 
+def is_expected_temporary_codex_home_warning(diagnostics: str, target: Path) -> bool:
+    try:
+        canonical_target = target.resolve(strict=True)
+    except OSError:
+        return False
+    temporary_root = Path(tempfile.gettempdir())
+    if not temporary_root.is_absolute():
+        return False
+    try:
+        canonical_target.relative_to(temporary_root)
+    except ValueError:
+        return False
+    expected = (
+        "WARNING: proceeding, even though we could not create PATH aliases: "
+        "Refusing to create helper binaries under temporary dir "
+        f"{json.dumps(str(temporary_root), ensure_ascii=False)} "
+        "(codex_home: "
+        f"AbsolutePathBuf({json.dumps(str(canonical_target), ensure_ascii=False)}))"
+    )
+    return diagnostics == expected
+
+
 def bounded_codex_version(executable: Path, target: Path) -> str:
     environment = {
         "CODEX_HOME": str(target),
@@ -2567,14 +2589,7 @@ def bounded_codex_version(executable: Path, target: Path) -> str:
             diagnostics = stderr.read().decode("utf-8").strip()
         except UnicodeDecodeError:
             fail("installed Codex version output or diagnostics are not valid UTF-8")
-    path_alias_warning = re.fullmatch(
-        r"WARNING: proceeding, even though we could not create PATH aliases: "
-        r"Refusing to create helper binaries under temporary dir "
-        r'"(?:\\.|[^"\\\r\n])*" '
-        r'\(codex_home: AbsolutePathBuf\("(?:\\.|[^"\\\r\n])*"\)\)',
-        diagnostics,
-    )
-    if diagnostics and path_alias_warning is None:
+    if diagnostics and not is_expected_temporary_codex_home_warning(diagnostics, target):
         fail("installed Codex returned unexpected version diagnostics")
     match = re.fullmatch(r"codex-cli ([0-9][0-9A-Za-z.+-]*)", text)
     if match is None or not SEMVER_PATTERN.fullmatch(match.group(1)):
@@ -2695,8 +2710,8 @@ def builder_source_contract() -> tuple[str, bytes]:
     plugin_version = version_document.get("nddev_builder_plugin_version")
     if not isinstance(plugin_version, str) or not SEMVER_PATTERN.fullmatch(plugin_version):
         fail("nddev-builder source version is invalid")
-    if version_document.get("build_version") != VERSION or plugin_version != VERSION:
-        fail("nddev-builder source version is not synchronized with the public build")
+    if version_document.get("build_version") != VERSION:
+        fail("public build version metadata is not synchronized")
 
     plugin_path = ROOT / "plugins" / BUILDER_PLUGIN_ID / ".codex-plugin" / "plugin.json"
     plugin_content, _ = read_regular_file(
@@ -3270,7 +3285,8 @@ def run_builder_plugin_command(
         detail = re.sub(r"[^\x09\x0a\x20-\x7e]", "?", (stderr or stdout))[-2000:].strip()
         suffix = f"; output: {detail}" if detail else ""
         fail(f"official Codex plugin command failed with exit {returncode}{suffix}")
-    if stderr.strip():
+    diagnostics = stderr.strip()
+    if diagnostics and not is_expected_temporary_codex_home_warning(diagnostics, target):
         fail("official Codex plugin command returned unexpected diagnostics")
     return parse_json_object(stdout.encode("utf-8"), "official Codex plugin command output")
 
