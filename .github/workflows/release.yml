@@ -56,14 +56,114 @@ jobs:
               r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
           )
           version = pathlib.Path("VERSION").read_text(encoding="ascii").strip()
+          version_data = json.loads(pathlib.Path("build/version.json").read_text())
+          manifest = json.loads(pathlib.Path("build/manifest.json").read_text())
+          contract = json.loads(pathlib.Path("config/nddev-contract.json").read_text())
+          baseline = json.loads(
+              pathlib.Path("references/codex-baseline.json").read_text()
+          )
           versions = {
               os.environ["RELEASE_TAG"],
               version,
-              json.loads(pathlib.Path("build/version.json").read_text())["build_version"],
-              json.loads(pathlib.Path("build/manifest.json").read_text())["build_version"],
+              version_data["build_version"],
+              manifest["build_version"],
           }
           if len(versions) != 1 or semver.fullmatch(version) is None:
               raise SystemExit(f"release version mismatch: {sorted(versions)}")
+          minimum = version_data["codex_cli_requires"]
+          tested = version_data["codex_cli_tested"]
+          if not minimum.startswith(">=") or semver.fullmatch(minimum[2:]) is None:
+              raise SystemExit(f"invalid Codex minimum version: {minimum}")
+          if semver.fullmatch(tested) is None:
+              raise SystemExit(f"invalid Codex tested version: {tested}")
+          minimum_tuple = tuple(int(part) for part in minimum[2:].split("."))
+          tested_tuple = tuple(int(part) for part in tested.split("."))
+          if tested_tuple < minimum_tuple:
+              raise SystemExit("Codex tested version is below the minimum")
+          baseline_ref = "references/codex-baseline.json"
+          if version_data["runtime_baseline_ref"] != baseline_ref:
+              raise SystemExit("build version baseline reference mismatch")
+          if manifest["runtime_compatibility"]["baseline_ref"] != baseline_ref:
+              raise SystemExit("manifest baseline reference mismatch")
+          if contract["runtime_compatibility"]["baseline_ref"] != baseline_ref:
+              raise SystemExit("contract baseline reference mismatch")
+          expected_version_refs = {
+              "minimum_version_ref": "build/version.json:codex_cli_requires",
+              "tested_version_ref": "build/version.json:codex_cli_tested",
+          }
+          if baseline["codex_cli"] != expected_version_refs:
+              raise SystemExit("Codex baseline version references mismatch")
+          if baseline["permission_profiles"] != {
+              "configuration_key": "default_permissions",
+              "custom_profiles_surface": "[permissions.<name>]",
+              "custom_profiles_used": False,
+              "managed_enforcement": False,
+              "status": "beta",
+          }:
+              raise SystemExit("Codex permission-profile baseline mismatch")
+          if baseline["evidence"]["official_permissions_documentation"] != (
+              "https://learn.chatgpt.com/docs/permissions"
+          ):
+              raise SystemExit("Codex baseline documentation mismatch")
+          if baseline["evidence"]["official_agents_documentation"] != (
+              "https://learn.chatgpt.com/docs/agent-configuration/agents-md"
+              "#how-codex-discovers-guidance"
+          ):
+              raise SystemExit("Codex instruction baseline documentation mismatch")
+          expected_permission_defaults = {
+              "admin_enforcement": False,
+              "built_in_profiles_only": True,
+              "configuration_precedence_applies": True,
+              "custom_permissions_table_used": False,
+          }
+          if contract["permission_defaults"] != expected_permission_defaults:
+              raise SystemExit("public permission-default contract mismatch")
+          transaction = manifest["transaction_policy"]
+          if {
+              "agents_override_blocked_commands": transaction[
+                  "agents_override_blocked_commands"
+              ],
+              "managed_file_mode": transaction["managed_file_mode"],
+              "new_target_mode": transaction["new_target_mode"],
+              "preserve_existing_target_mode": transaction[
+                  "preserve_existing_target_mode"
+              ],
+              "reject_agents_override": transaction["reject_agents_override"],
+          } != {
+              "agents_override_blocked_commands": [
+                  "plan",
+                  "apply",
+                  "switch",
+                  "restore",
+                  "launch",
+              ],
+              "managed_file_mode": "0600",
+              "new_target_mode": "0700",
+              "preserve_existing_target_mode": True,
+              "reject_agents_override": True,
+          }:
+              raise SystemExit("manifest lifecycle hardening contract mismatch")
+          expected_launch = {
+              "command": "codex",
+              "direct_command": "CODEX_HOME=<absolute-target> codex [args...]",
+              "environment_variable": "CODEX_HOME",
+              "forwards_arguments": True,
+              "forwards_child_exit_code": True,
+              "json_manager_errors_supported": True,
+              "manager_command": (
+                  "python3 cli-tools/nddev_codex.py launch "
+                  "--target <absolute-target> -- [args...]"
+              ),
+              "requires_clean_managed_target": True,
+              "streams_child_stdio": True,
+              "successful_child_output_wrapped": False,
+              "target_environment_scope": "child-process-only",
+              "target_must_equal_runtime_home": True,
+          }
+          if manifest["runtime_launch"] != expected_launch:
+              raise SystemExit("manifest launch contract mismatch")
+          if contract["runtime_launch"] != expected_launch:
+              raise SystemExit("public launch contract mismatch")
           expected = {
               "safe": (":read-only", "on-request"),
               "full-auto": (":danger-full-access", "never"),
@@ -101,6 +201,6 @@ jobs:
       package_name: nddev-codex-app
       archive_paths: >-
         README.md LICENSE VERSION CHANGELOG.md SECURITY.md .gitignore .github
-        build cli-tools config setups
+        build cli-tools config references setups
       runtime_paths: >-
-        README.md LICENSE VERSION build cli-tools config setups
+        README.md LICENSE VERSION build cli-tools config references setups

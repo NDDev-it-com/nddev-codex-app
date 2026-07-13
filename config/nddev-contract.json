@@ -10,13 +10,40 @@
       "config.toml",
       "AGENTS.md"
     ],
+    "managed_file_mode": "0600",
     "preserve_other_state": true,
     "stamp_file": "NDDEV-CODEX-SETUP.json",
     "stamp_schema": 1
   },
+  "permission_defaults": {
+    "admin_enforcement": false,
+    "built_in_profiles_only": true,
+    "configuration_precedence_applies": true,
+    "custom_permissions_table_used": false
+  },
   "product_name": "nddev-codex-app",
+  "runtime_compatibility": {
+    "baseline_ref": "references/codex-baseline.json",
+    "permission_profiles_status": "beta",
+    "version_ref": "build/version.json"
+  },
+  "runtime_launch": {
+    "command": "codex",
+    "direct_command": "CODEX_HOME=<absolute-target> codex [args...]",
+    "environment_variable": "CODEX_HOME",
+    "forwards_arguments": true,
+    "forwards_child_exit_code": true,
+    "json_manager_errors_supported": true,
+    "manager_command": "python3 cli-tools/nddev_codex.py launch --target <absolute-target> -- [args...]",
+    "requires_clean_managed_target": true,
+    "streams_child_stdio": true,
+    "successful_child_output_wrapped": false,
+    "target_environment_scope": "child-process-only",
+    "target_must_equal_runtime_home": true
+  },
   "safety": {
     "absolute_target_required": true,
+    "agents_override_rejected": true,
     "canonical_target_binding": true,
     "default_target": null,
     "explicit_target_required": [
@@ -25,10 +52,13 @@
       "apply",
       "switch",
       "restore",
-      "remove"
+      "remove",
+      "launch"
     ],
     "max_backups": 10,
     "missing_target_argument_rejected": true,
+    "new_target_mode": "0700",
+    "preserve_existing_target_mode": true,
     "relative_target_rejected": true,
     "rollback_on_failure": true,
     "target_symlinks_rejected": true
@@ -42,6 +72,7 @@
       "safe",
       "full-auto"
     ],
+    "launch_command": "python3 cli-tools/nddev_codex.py launch --target <absolute-target> -- [args...]",
     "status_command": "python3 cli-tools/nddev_codex.py status --target <absolute-dir> [--json]"
   },
   "source_root": "setups",

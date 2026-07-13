@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "codex_cli": {
+    "minimum_version_ref": "build/version.json:codex_cli_requires",
+    "tested_version_ref": "build/version.json:codex_cli_tested"
+  },
+  "evidence": {
+    "minimum_version_basis": "Official mixed-version permission-profile compatibility threshold",
+    "official_agents_documentation": "https://learn.chatgpt.com/docs/agent-configuration/agents-md#how-codex-discovers-guidance",
+    "official_permissions_documentation": "https://learn.chatgpt.com/docs/permissions"
+  },
+  "permission_profiles": {
+    "configuration_key": "default_permissions",
+    "custom_profiles_surface": "[permissions.<name>]",
+    "custom_profiles_used": false,
+    "managed_enforcement": false,
+    "status": "beta"
+  },
+  "verified_date": "2026-07-13",
+  "verified_version_ref": "build/version.json:codex_cli_tested"
+}
