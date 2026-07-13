@@ -72,9 +72,9 @@ jobs:
               raise SystemExit(f"release version mismatch: {sorted(versions)}")
           if version_data["schema_version"] != 2:
               raise SystemExit("unsupported build version schema")
-          if manifest["schema_version"] != 2:
+          if manifest["schema_version"] != 3:
               raise SystemExit("unsupported manifest schema")
-          if contract["contract_version"] != 2:
+          if contract["contract_version"] != 3:
               raise SystemExit("unsupported public contract version")
           if baseline["schema_version"] != 2:
               raise SystemExit("unsupported runtime baseline schema")
@@ -240,16 +240,17 @@ jobs:
     name: Publish attested immutable release
     needs: verify
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
-      artifact-metadata: write
+      contents: write # Create the release and upload its immutable assets.
+      id-token: write # Authenticate keyless signing through GitHub OIDC.
+      attestations: write # Publish build provenance for the release assets.
+      artifact-metadata: write # Record artifact metadata for the published release.
     uses: NDDev-it-com/nddev-ci-workflows/.github/workflows/release-supply-chain.yml@8b8e3ea6321c912b68eec831c2072a0173203433 # 0.8.1
     with:
       version: ${{ github.ref_name }}
       package_name: nddev-codex-app
       archive_paths: >-
-        README.md LICENSE VERSION CHANGELOG.md SECURITY.md .gitignore .github
-        build cli-tools config references setups
+        README.md LICENSE VERSION CHANGELOG.md SECURITY.md .gitignore .agents
+        .github build cli-tools config plugins references setups
       runtime_paths: >-
-        README.md LICENSE VERSION build cli-tools config references setups
+        README.md LICENSE VERSION .agents build cli-tools config plugins
+        references setups

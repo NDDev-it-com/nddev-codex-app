@@ -668,7 +668,7 @@ def _restore_snapshot(committed: CommittedFile) -> str | None:
         ):
             raise CreationError(f"restored artifact invariants failed: {staged.planned.path}")
         os.fsync(staged.parent_fd)
-    except BaseException as exc:
+    except Exception as exc:
         if restore_name is not None and restore_identity is not None:
             cleanup_error = _unlink_known_file(
                 staged.parent_fd,
@@ -728,7 +728,14 @@ def _apply_plan(
         for directory in sorted(
             required_directories, key=lambda item: (len(item.parts), str(item))
         ):
-            parent_descriptors[directory] = _open_directory_anchored(directory, created_directories)
+            descriptor = _open_directory_anchored(directory, created_directories)
+            registered = False
+            try:
+                parent_descriptors[directory] = descriptor
+                registered = True
+            finally:
+                if not registered:
+                    os.close(descriptor)
         snapshots: dict[Path, FileSnapshot] = {}
         for planned in plan.files:
             parent_fd = parent_descriptors[planned.path.parent]

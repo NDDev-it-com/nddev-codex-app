@@ -645,6 +645,7 @@ def ensure_target_directory(target: Path, *, create: bool) -> bool:
             try:
                 remove_created_target_if_empty(target)
             except ConcurrentTargetChange:
+                # Preserve a target that another actor rebound during failure cleanup.
                 pass
             raise
         return True
@@ -1132,7 +1133,7 @@ def target_lock(target: Path) -> Iterator[TargetGuard]:
                     if close_cleanup_lock_fd:
                         os.close(cleanup_lock_fd)
                 os.rmdir(lock.name, dir_fd=parent_fd)
-        except BaseException as exc:
+        except Exception as exc:
             cleanup_error = exc
         finally:
             if guard is not None:
@@ -1394,7 +1395,7 @@ def anchored_stage(
                 os.unlink(entry, dir_fd=stage_fd)
             os.fsync(stage_fd)
             os.rmdir(stage_name, dir_fd=guard.parent_fd)
-        except BaseException as exc:
+        except Exception as exc:
             cleanup_error = exc
         finally:
             os.close(stage_fd)
@@ -2210,6 +2211,7 @@ def selective_rollback(
     try:
         remove_created_target_if_empty(target)
     except ConcurrentTargetChange:
+        # Preserve a concurrent replacement instead of deleting non-manager state.
         pass
     return tuple(selected)
 
@@ -2384,7 +2386,7 @@ def restore_slot(target: Path, slot: int) -> dict[str, Any]:
 
 
 def remove_setup(target: Path) -> dict[str, Any]:
-    status = require_clean_managed(target)
+    require_clean_managed(target)
     with target_lock(target) as guard:
         status = require_clean_managed(target)
         before = capture_managed_snapshot(target)
@@ -4042,7 +4044,7 @@ def launch_codex(target: Path, child_args: list[str]) -> int:
     forwarded = child_args[1:] if child_args[:1] == ["--"] else child_args
     with target_lock(target) as guard:
         require_effective_clean_managed(target)
-        installation = require_current_software(target)
+        require_current_software(target)
         environment = os.environ.copy()
         environment["CODEX_HOME"] = str(target)
         require_effective_clean_managed(target)
@@ -4071,7 +4073,7 @@ def launch_desktop(target: Path, raw_workspace: str | None) -> int:
         fail("the official `codex app` desktop bridge is supported only on macOS")
     workspace = resolve_desktop_workspace(raw_workspace)
     with target_lock(target) as guard:
-        installation = require_current_software(target)
+        require_current_software(target)
         environment = os.environ.copy()
         environment["CODEX_HOME"] = str(target)
         installation = require_current_software(target)
