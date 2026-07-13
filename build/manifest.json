@@ -24,7 +24,8 @@
       "apply",
       "switch",
       "restore",
-      "remove"
+      "remove",
+      "launch"
     ]
   },
   "entrypoint": "python3 cli-tools/nddev_codex.py",
@@ -35,11 +36,18 @@
   ],
   "name": "nddev-codex-app",
   "permission_policy": {
-    "forbidden_legacy_surfaces": [
-      "sandbox_mode",
-      "[permissions]",
-      "[profiles.*]"
-    ],
+    "admin_enforcement": false,
+    "built_in_profiles_only": true,
+    "configuration_precedence_applies": true,
+    "configuration_surface": {
+      "allowed_top_level_keys": [
+        "default_permissions",
+        "approval_policy"
+      ],
+      "custom_permissions_table": "supported-by-codex-but-not-used",
+      "legacy_sandbox_settings": "forbidden",
+      "named_config_profiles": "not-used"
+    },
     "setups": {
       "full-auto": {
         "approval_policy": "never",
@@ -52,6 +60,25 @@
     },
     "source": "setups/<id>/config.toml"
   },
+  "runtime_compatibility": {
+    "baseline_ref": "references/codex-baseline.json",
+    "permission_profiles_status": "beta",
+    "version_ref": "build/version.json"
+  },
+  "runtime_launch": {
+    "command": "codex",
+    "direct_command": "CODEX_HOME=<absolute-target> codex [args...]",
+    "environment_variable": "CODEX_HOME",
+    "forwards_arguments": true,
+    "forwards_child_exit_code": true,
+    "json_manager_errors_supported": true,
+    "manager_command": "python3 cli-tools/nddev_codex.py launch --target <absolute-target> -- [args...]",
+    "requires_clean_managed_target": true,
+    "streams_child_stdio": true,
+    "successful_child_output_wrapped": false,
+    "target_environment_scope": "child-process-only",
+    "target_must_equal_runtime_home": true
+  },
   "schema_version": 1,
   "setup_ids": [
     "safe",
@@ -59,8 +86,19 @@
   ],
   "source_root": "setups",
   "transaction_policy": {
+    "agents_override_blocked_commands": [
+      "plan",
+      "apply",
+      "switch",
+      "restore",
+      "launch"
+    ],
+    "managed_file_mode": "0600",
+    "new_target_mode": "0700",
+    "preserve_existing_target_mode": true,
     "lock": "exclusive sibling directory",
     "preserve_unmanaged_files": true,
+    "reject_agents_override": true,
     "reject_symlink_managed_files": true,
     "rollback_on_failure": true,
     "staging": "same-parent temporary directory"
