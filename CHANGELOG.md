@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented here.
 
+## 0.2.0 - 2026-07-13
+
+### Added
+
+- Target-owned installation and update of the exact official Codex CLI
+  `0.144.3` standalone release through its verified `install.sh` asset.
+- Non-mutating `software-status` with validated package layout, metadata,
+  executable, and version reporting.
+- macOS `desktop` delegation to the stable official `codex app` command, with
+  an optional validated absolute workspace.
+
+### Changed
+
+- `launch` now requires the validated target-owned Codex CLI instead of
+  resolving an ambient `codex` from `PATH`.
+- Installer execution now isolates home, temporary state, and `PATH`; JSON
+  output remains free of installer prose, and abnormal exits terminate the
+  complete installer process group.
+- Public product language distinguishes this setup manager from the current
+  ChatGPT desktop app and its Chat, ChatGPT Work, and Codex modes.
+- Desktop delegation records the pinned CLI's legacy `Codex.app` packaging and
+  does not claim that the GUI inherits the selected target configuration.
+
 ## 0.1.0 - 2026-07-13
 
 ### Added

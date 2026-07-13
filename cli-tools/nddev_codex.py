@@ -11,15 +11,19 @@ import json
 import os
 import re
 import secrets
-import shutil
+import selectors
+import signal
 import stat
 import subprocess
 import sys
+import tempfile
+import time
+import urllib.error
+import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NoReturn
-
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_ROOT = ROOT / "setups"
@@ -33,6 +37,56 @@ OWNER_FILE_MODE = 0o600
 OWNER_DIRECTORY_MODE = 0o700
 METADATA_MAX_BYTES = 256 * 1024
 MANAGED_PAYLOAD_MAX_BYTES = 8 * 1024 * 1024
+TESTED_CODEX_VERSION = "0.144.3"
+INSTALLER_RELEASE_TAG = f"rust-v{TESTED_CODEX_VERSION}"
+INSTALLER_NAME = "install.sh"
+INSTALLER_URL = (
+    f"https://github.com/openai/codex/releases/download/{INSTALLER_RELEASE_TAG}/{INSTALLER_NAME}"
+)
+INSTALLER_SIZE_BYTES = 25_133
+INSTALLER_SHA256 = "1154e9daf713aacd1534efca8042bfd6665ad24bc1d1dfd86b8f439fe60a7a5d"
+RELEASE_METADATA_URL = (
+    f"https://api.github.com/repos/openai/codex/releases/tags/{INSTALLER_RELEASE_TAG}"
+)
+PACKAGE_CHECKSUM_ASSET = "codex-package_SHA256SUMS"
+PACKAGE_CHECKSUM_SHA256 = "8cf3a2935c0bda2de4a0c6e6597765ae770f9222ae5ff814b36d4a78ceb34446"
+PACKAGE_ASSETS = {
+    "aarch64-apple-darwin": (
+        "codex-package-aarch64-apple-darwin.tar.gz",
+        "9f74eca4a113f972be6187f0fc1c6bcf0d2831b604ed59c217c926ec512fef1f",
+    ),
+    "x86_64-apple-darwin": (
+        "codex-package-x86_64-apple-darwin.tar.gz",
+        "35a1c886f00ec70c350773d88ef4f7cb083510ae682ff90ac687779ecb75bf88",
+    ),
+    "aarch64-unknown-linux-musl": (
+        "codex-package-aarch64-unknown-linux-musl.tar.gz",
+        "d91c6354ec1efc125068056c02bc8cffbc0a53fd4ecfebc3e5f1771765fc7fa3",
+    ),
+    "x86_64-unknown-linux-musl": (
+        "codex-package-x86_64-unknown-linux-musl.tar.gz",
+        "1c3c1f1f636da56a197ce0b5084d44b86f58f0fb32983278fa55c2544d221af4",
+    ),
+}
+INSTALLER_MAX_BYTES = 64 * 1024
+PACKAGE_METADATA_MAX_BYTES = 64 * 1024
+VERSION_OUTPUT_MAX_BYTES = 4 * 1024
+INSTALLER_TIMEOUT_SECONDS = 600
+VERSION_TIMEOUT_SECONDS = 15
+DOWNLOAD_CHUNK_SIZE = 1024 * 1024
+INSTALLER_OUTPUT_MAX_BYTES = 256 * 1024
+INSTALLER_TERMINATION_GRACE_SECONDS = 0.5
+INSTALLER_KILL_WAIT_SECONDS = 2
+CONTROLLED_INSTALLER_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+PACKAGE_METADATA_KEYS = {
+    "layoutVersion",
+    "version",
+    "target",
+    "variant",
+    "entrypoint",
+    "resourcesDir",
+    "pathDir",
+}
 SETUP_ID_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 SEMVER_PATTERN = re.compile(
@@ -111,8 +165,16 @@ class BackupPoolLease:
     closed: bool = False
 
 
-ACTIVE_TARGET_GUARD: contextvars.ContextVar[TargetGuard | None] = (
-    contextvars.ContextVar("nddev_codex_target_guard", default=None)
+@dataclass(frozen=True)
+class SoftwareInstallation:
+    version: str
+    executable: Path
+    release_directory: Path
+    host_target: str
+
+
+ACTIVE_TARGET_GUARD: contextvars.ContextVar[TargetGuard | None] = contextvars.ContextVar(
+    "nddev_codex_target_guard", default=None
 )
 
 
@@ -158,9 +220,7 @@ def require_directory(path: Path, label: str) -> os.stat_result:
     return info
 
 
-def require_regular_file(
-    path: Path, label: str, *, owner_only: bool = False
-) -> os.stat_result:
+def require_regular_file(path: Path, label: str, *, owner_only: bool = False) -> os.stat_result:
     try:
         info = path.lstat()
     except FileNotFoundError:
@@ -247,9 +307,7 @@ def parse_json_object(content: bytes, label: str) -> dict[str, Any]:
     return value
 
 
-def load_json_object(
-    path: Path, label: str, *, owner_only: bool = False
-) -> dict[str, Any]:
+def load_json_object(path: Path, label: str, *, owner_only: bool = False) -> dict[str, Any]:
     content, _ = read_regular_file(
         path,
         label,
@@ -304,10 +362,7 @@ def render_setup(setup_id: str) -> tuple[dict[str, Any], dict[str, bytes]]:
         fail(f"setup {setup_id} metadata has unsupported schema")
     if metadata["id"] != setup_id:
         fail(f"setup {setup_id} metadata identity mismatch")
-    if (
-        not isinstance(metadata["description"], str)
-        or not metadata["description"].strip()
-    ):
+    if not isinstance(metadata["description"], str) or not metadata["description"].strip():
         fail(f"setup {setup_id} description must be non-empty")
     if metadata["managed_files"] != list(MANAGED_FILES):
         fail(f"setup {setup_id} managed file declaration is invalid")
@@ -450,9 +505,7 @@ def revalidate_guard_parent(guard: TargetGuard) -> None:
         fail_concurrent("canonical --target parent changed during the operation")
     if guard.parent_fd is not None:
         if identity_of(os.fstat(guard.parent_fd)) != guard.parent_identity:
-            fail_concurrent(
-                "canonical --target parent handle changed during the operation"
-            )
+            fail_concurrent("canonical --target parent handle changed during the operation")
 
 
 def revalidate_held_target(guard: TargetGuard) -> None:
@@ -709,9 +762,7 @@ def read_target_file(
     )
 
 
-def snapshot_target_file(
-    target: Path, name: str, *, owner_only: bool
-) -> FileSnapshot | None:
+def snapshot_target_file(target: Path, name: str, *, owner_only: bool) -> FileSnapshot | None:
     info = target_entry_info(target, name)
     if info is None:
         return None
@@ -738,17 +789,13 @@ def capture_managed_snapshot(
     }
 
 
-def assert_target_snapshot(
-    target: Path, name: str, expected: FileSnapshot | None
-) -> None:
+def assert_target_snapshot(target: Path, name: str, expected: FileSnapshot | None) -> None:
     actual = snapshot_target_file(target, name, owner_only=False)
     if actual != expected:
         fail_concurrent(f"managed path changed concurrently: {target / name}")
 
 
-def assert_managed_snapshot(
-    target: Path, expected: dict[str, FileSnapshot | None]
-) -> None:
+def assert_managed_snapshot(target: Path, expected: dict[str, FileSnapshot | None]) -> None:
     for name in (*MANAGED_FILES, STAMP_NAME):
         assert_target_snapshot(target, name, expected[name])
 
@@ -759,9 +806,7 @@ def target_has_instruction_override(target: Path) -> bool:
 
 def reject_instruction_override(target: Path, action: str) -> None:
     if target_has_instruction_override(target):
-        fail(
-            f"{OVERRIDE_NAME} shadows the managed AGENTS.md; remove it before {action}"
-        )
+        fail(f"{OVERRIDE_NAME} shadows the managed AGENTS.md; remove it before {action}")
 
 
 def managed_path(target: Path, name: str) -> Path:
@@ -844,9 +889,7 @@ def inspect_target(target: Path) -> dict[str, Any]:
             "agents_override_present": override_present,
         }
 
-    expected = validate_digest_map(
-        stamp["managed_files"], "managed stamp managed_files"
-    )
+    expected = validate_digest_map(stamp["managed_files"], "managed stamp managed_files")
     drift: list[str] = []
     for name in MANAGED_FILES:
         snapshot = snapshot_target_file(target, name, owner_only=False)
@@ -864,9 +907,7 @@ def inspect_target(target: Path) -> dict[str, Any]:
     if stamp_snapshot is None:
         drift.append(STAMP_NAME)
     else:
-        stamp_owner_matches = (
-            not hasattr(os, "geteuid") or stamp_snapshot.owner == os.geteuid()
-        )
+        stamp_owner_matches = not hasattr(os, "geteuid") or stamp_snapshot.owner == os.geteuid()
         if stamp_snapshot.mode != OWNER_FILE_MODE or not stamp_owner_matches:
             drift.append(STAMP_NAME)
     return {
@@ -905,9 +946,7 @@ def require_effective_clean_managed(target: Path) -> dict[str, Any]:
             name,
             f"managed path {target / name}",
             owner_only=True,
-            max_bytes=(
-                METADATA_MAX_BYTES if name == STAMP_NAME else MANAGED_PAYLOAD_MAX_BYTES
-            ),
+            max_bytes=(METADATA_MAX_BYTES if name == STAMP_NAME else MANAGED_PAYLOAD_MAX_BYTES),
         )
         if actual_content != expected_content:
             fail(
@@ -925,9 +964,7 @@ def stamp_bytes(target: Path, setup_id: str, rendered: dict[str, bytes]) -> byte
             "build_version": VERSION,
             "setup_id": setup_id,
             "canonical_target": str(target),
-            "managed_files": {
-                name: sha256_bytes(rendered[name]) for name in MANAGED_FILES
-            },
+            "managed_files": {name: sha256_bytes(rendered[name]) for name in MANAGED_FILES},
         }
     )
 
@@ -943,10 +980,7 @@ def lock_path(target: Path) -> Path:
 @contextlib.contextmanager
 def target_lock(target: Path) -> Iterator[TargetGuard]:
     if not anchored_directory_operations_supported():
-        fail(
-            "mutating commands require dir-fd and no-follow filesystem support "
-            "on this platform"
-        )
+        fail("mutating commands require dir-fd and no-follow filesystem support on this platform")
 
     lock = lock_path(target)
     parent_info = require_directory(target.parent, "canonical --target parent")
@@ -986,9 +1020,7 @@ def target_lock(target: Path) -> Iterator[TargetGuard]:
         except FileNotFoundError:
             target_identity = None
         else:
-            if stat.S_ISLNK(target_info.st_mode) or not stat.S_ISDIR(
-                target_info.st_mode
-            ):
+            if stat.S_ISLNK(target_info.st_mode) or not stat.S_ISDIR(target_info.st_mode):
                 fail("--target must remain a real directory")
             target_fd = open_directory_fd(target.name, dir_fd=parent_fd)
             opened_target = os.fstat(target_fd)
@@ -1004,9 +1036,7 @@ def target_lock(target: Path) -> Iterator[TargetGuard]:
             target_fd=target_fd,
         )
         token = ACTIVE_TARGET_GUARD.set(guard)
-        owner = canonical_json(
-            {"schema_version": 1, "pid": os.getpid(), "target": str(target)}
-        )
+        owner = canonical_json({"schema_version": 1, "pid": os.getpid(), "target": str(target)})
         write_new_file("owner.json", owner, dir_fd=lock_fd)
         lock_owner_snapshot = snapshot_file_at(
             lock_fd,
@@ -1026,9 +1056,7 @@ def target_lock(target: Path) -> Iterator[TargetGuard]:
             ACTIVE_TARGET_GUARD.reset(token)
         try:
             if lock_identity is not None:
-                current_lock = os.stat(
-                    lock.name, dir_fd=parent_fd, follow_symlinks=False
-                )
+                current_lock = os.stat(lock.name, dir_fd=parent_fd, follow_symlinks=False)
                 if identity_of(current_lock) != lock_identity:
                     fail("target lock identity changed before cleanup")
                 cleanup_lock_fd = lock_fd
@@ -1190,22 +1218,15 @@ def remove_backup_directory_at(
                 allowed_payload = {*MANAGED_FILES, STAMP_NAME}
                 payload_entries = set(os.listdir(payload_fd))
                 if not payload_entries <= allowed_payload:
-                    fail(
-                        f"backup cleanup encountered unexpected payload entries: {name}"
-                    )
+                    fail(f"backup cleanup encountered unexpected payload entries: {name}")
                 for payload_entry in payload_entries:
                     payload_info = os.stat(
                         payload_entry,
                         dir_fd=payload_fd,
                         follow_symlinks=False,
                     )
-                    if stat.S_ISLNK(payload_info.st_mode) or not stat.S_ISREG(
-                        payload_info.st_mode
-                    ):
-                        fail(
-                            "backup cleanup encountered an unsafe payload entry: "
-                            f"{payload_entry}"
-                        )
+                    if stat.S_ISLNK(payload_info.st_mode) or not stat.S_ISREG(payload_info.st_mode):
+                        fail(f"backup cleanup encountered an unsafe payload entry: {payload_entry}")
             finally:
                 os.close(payload_fd)
         if BACKUP_NAME in slot_entries:
@@ -1214,9 +1235,7 @@ def remove_backup_directory_at(
                 dir_fd=slot_fd,
                 follow_symlinks=False,
             )
-            if stat.S_ISLNK(envelope_info.st_mode) or not stat.S_ISREG(
-                envelope_info.st_mode
-            ):
+            if stat.S_ISLNK(envelope_info.st_mode) or not stat.S_ISREG(envelope_info.st_mode):
                 fail("backup cleanup encountered an unsafe envelope")
         for entry in os.listdir(slot_fd):
             info = os.stat(entry, dir_fd=slot_fd, follow_symlinks=False)
@@ -1472,9 +1491,7 @@ def replace_managed_state(
                 )
                 guard.manager_results[name] = None
             elif entry_exists_at(guard.target_fd, name):
-                fail_concurrent(
-                    f"managed path appeared before replacement: {target / name}"
-                )
+                fail_concurrent(f"managed path appeared before replacement: {target / name}")
 
             content = desired[name]
             if content is None:
@@ -1488,9 +1505,7 @@ def replace_managed_state(
                     follow_symlinks=False,
                 )
             except FileExistsError:
-                fail_concurrent(
-                    f"managed path appeared during replacement: {target / name}"
-                )
+                fail_concurrent(f"managed path appeared during replacement: {target / name}")
             os.unlink(f"new-{name}", dir_fd=stage_fd)
             guard.mutated_paths.add(name)
             guard.manager_results[name] = staged[name]
@@ -1502,13 +1517,9 @@ def replace_managed_state(
             installed = snapshot_held_target_file(guard, name, owner_only=False)
             if content is None:
                 if installed is not None:
-                    fail_concurrent(
-                        f"managed path appeared after removal: {target / name}"
-                    )
+                    fail_concurrent(f"managed path appeared after removal: {target / name}")
             elif installed is None or installed.digest != sha256_bytes(content):
-                fail_concurrent(
-                    f"managed path changed after replacement: {target / name}"
-                )
+                fail_concurrent(f"managed path changed after replacement: {target / name}")
         os.fsync(stage_fd)
         os.fsync(guard.target_fd)
         if not allow_detached_target:
@@ -1653,12 +1664,8 @@ def load_backup_from_pool_fd(
                 payload_identity,
                 f"backup slot {slot} payload",
             )
-            desired: dict[str, bytes | None] = {
-                name: None for name in (*MANAGED_FILES, STAMP_NAME)
-            }
-            allowed_payload = {
-                name for name, digest in digests.items() if digest is not None
-            }
+            desired: dict[str, bytes | None] = {name: None for name in (*MANAGED_FILES, STAMP_NAME)}
+            allowed_payload = {name for name, digest in digests.items() if digest is not None}
             if stamp_digest is not None:
                 allowed_payload.add(STAMP_NAME)
             if set(os.listdir(payload_fd)) != allowed_payload:
@@ -1862,9 +1869,7 @@ def _create_transaction_backup_with_lease(
     try:
         if entry_exists_at(pool_fd, hold_name):
             fail(f"backup recovery hold already exists: {pool / hold_name}")
-        desired: dict[str, bytes | None] = {
-            name: None for name in (*MANAGED_FILES, STAMP_NAME)
-        }
+        desired: dict[str, bytes | None] = {name: None for name in (*MANAGED_FILES, STAMP_NAME)}
         digests: dict[str, str | None] = {}
         for name in MANAGED_FILES:
             if target_entry_present(target, name):
@@ -2008,9 +2013,7 @@ def _create_transaction_backup_with_lease(
                 pass
             else:
                 if identity_of(current) != staging_identity:
-                    fail_concurrent(
-                        f"new backup slot changed during recovery: {destination}"
-                    )
+                    fail_concurrent(f"new backup slot changed during recovery: {destination}")
                 remove_backup_directory_at(
                     pool_fd,
                     destination_name,
@@ -2022,11 +2025,7 @@ def _create_transaction_backup_with_lease(
                 staging_name,
                 staging_identity,
             )
-        if (
-            old_quarantined
-            and old_identity is not None
-            and entry_exists_at(pool_fd, hold_name)
-        ):
+        if old_quarantined and old_identity is not None and entry_exists_at(pool_fd, hold_name):
             if entry_exists_at(pool_fd, destination_name):
                 fail("cannot restore rotated backup because its slot is occupied")
             held = os.stat(hold_name, dir_fd=pool_fd, follow_symlinks=False)
@@ -2159,9 +2158,7 @@ def selective_rollback(
     if guard is None:
         fail("rollback requires an active anchored target lock")
     selected: list[str] = []
-    expected: dict[str, FileSnapshot | None] = {
-        name: None for name in (*MANAGED_FILES, STAMP_NAME)
-    }
+    expected: dict[str, FileSnapshot | None] = {name: None for name in (*MANAGED_FILES, STAMP_NAME)}
     for name in (*MANAGED_FILES, STAMP_NAME):
         if name not in guard.manager_results:
             continue
@@ -2188,9 +2185,7 @@ def selective_rollback(
 
 
 def cleanup_unbacked_mutation(target: Path) -> None:
-    empty: dict[str, bytes | None] = {
-        name: None for name in (*MANAGED_FILES, STAMP_NAME)
-    }
+    empty: dict[str, bytes | None] = {name: None for name in (*MANAGED_FILES, STAMP_NAME)}
     selective_rollback(target, empty)
 
 
@@ -2246,9 +2241,7 @@ def mutate_setup(target: Path, setup_id: str, command: str) -> dict[str, Any]:
         rollback_desired: dict[str, bytes | None] | None = None
         backup_lease: BackupPoolLease | None = None
         if plan["backup_required"]:
-            backup_slot, rollback_desired, backup_lease = create_transaction_backup(
-                target
-            )
+            backup_slot, rollback_desired, backup_lease = create_transaction_backup(target)
         try:
             if backup_lease is not None:
                 validate_backup_before_target_mutation(backup_lease)
@@ -2372,9 +2365,7 @@ def remove_setup(target: Path) -> dict[str, Any]:
         try:
             validate_backup_before_target_mutation(backup_lease)
             assert_managed_snapshot(target, before)
-            desired: dict[str, bytes | None] = {
-                name: None for name in (*MANAGED_FILES, STAMP_NAME)
-            }
+            desired: dict[str, bytes | None] = {name: None for name in (*MANAGED_FILES, STAMP_NAME)}
             replace_managed_state(target, desired, before)
             revalidate_backup_pool_lease(backup_lease)
         except BaseException as operation_error:
@@ -2396,6 +2387,545 @@ def remove_setup(target: Path) -> dict[str, Any]:
         "target": str(target),
         "removed_setup_id": status["setup_id"],
         "backup_slot": backup_slot,
+    }
+
+
+def host_package_target() -> str:
+    if not hasattr(os, "uname"):
+        fail("standalone Codex installation is supported only on macOS and Linux")
+    machine = os.uname().machine.lower()
+    if machine in {"arm64", "aarch64"}:
+        architecture = "aarch64"
+    elif machine in {"x86_64", "amd64"}:
+        architecture = "x86_64"
+    else:
+        fail(f"unsupported Codex installation architecture: {machine}")
+
+    if sys.platform == "darwin":
+        if architecture == "x86_64":
+            try:
+                translated = subprocess.run(
+                    ["/usr/sbin/sysctl", "-n", "sysctl.proc_translated"],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                    env={"PATH": CONTROLLED_INSTALLER_PATH, "LC_ALL": "C"},
+                )
+            except (OSError, subprocess.SubprocessError):
+                translated = None
+            if translated is not None and translated.returncode == 0:
+                if translated.stdout.strip() == "1":
+                    architecture = "aarch64"
+        return f"{architecture}-apple-darwin"
+    if sys.platform.startswith("linux"):
+        return f"{architecture}-unknown-linux-musl"
+    fail("standalone Codex installation is supported only on macOS and Linux")
+
+
+def path_entry_exists(path: Path) -> bool:
+    return os.path.lexists(path)
+
+
+def validate_software_directory(path: Path, label: str) -> None:
+    info = require_directory(path, label)
+    if hasattr(os, "geteuid") and owner_of(info) != os.geteuid():
+        fail(f"{label} must be owned by the current user")
+    if stat.S_IMODE(info.st_mode) & 0o022:
+        fail(f"{label} must not be writable by group or others")
+
+
+def validate_software_executable(path: Path, label: str) -> None:
+    info = require_regular_file(path, label)
+    if hasattr(os, "geteuid") and owner_of(info) != os.geteuid():
+        fail(f"{label} must be owned by the current user")
+    mode = stat.S_IMODE(info.st_mode)
+    if not mode & stat.S_IXUSR:
+        fail(f"{label} must be executable by its owner")
+    if mode & 0o022:
+        fail(f"{label} must not be writable by group or others")
+
+
+def resolve_software_symlink(path: Path, label: str) -> Path:
+    try:
+        info = path.lstat()
+    except FileNotFoundError:
+        fail(f"{label} is missing")
+    if not stat.S_ISLNK(info.st_mode):
+        fail(f"{label} must be a symlink")
+    if hasattr(os, "geteuid") and owner_of(info) != os.geteuid():
+        fail(f"{label} must be owned by the current user")
+    try:
+        return path.resolve(strict=True)
+    except OSError as exc:
+        fail(f"{label} cannot be resolved: {exc}")
+
+
+def read_package_metadata(path: Path) -> dict[str, Any]:
+    content, info = read_regular_file(
+        path,
+        "Codex standalone package metadata",
+        max_bytes=PACKAGE_METADATA_MAX_BYTES,
+    )
+    if hasattr(os, "geteuid") and owner_of(info) != os.geteuid():
+        fail("Codex standalone package metadata must be owned by the current user")
+    if stat.S_IMODE(info.st_mode) & 0o022:
+        fail("Codex standalone package metadata must not be writable by group or others")
+    metadata = parse_json_object(content, "Codex standalone package metadata")
+    require_exact_keys(
+        metadata,
+        PACKAGE_METADATA_KEYS,
+        "Codex standalone package metadata",
+    )
+    if metadata["layoutVersion"] != 1:
+        fail("Codex standalone package layout version is unsupported")
+    if metadata["variant"] != "codex":
+        fail("Codex standalone package variant is not codex")
+    if metadata["entrypoint"] != "bin/codex":
+        fail("Codex standalone package entrypoint is invalid")
+    if metadata["resourcesDir"] != "codex-resources":
+        fail("Codex standalone package resources directory is invalid")
+    if metadata["pathDir"] != "codex-path":
+        fail("Codex standalone package path directory is invalid")
+    version = metadata["version"]
+    if not isinstance(version, str) or not SEMVER_PATTERN.fullmatch(version):
+        fail("Codex standalone package version is invalid")
+    expected_target = host_package_target()
+    if metadata["target"] != expected_target:
+        fail(
+            "Codex standalone package target mismatch: "
+            f"expected {expected_target}, got {metadata['target']!r}"
+        )
+    return metadata
+
+
+def bounded_codex_version(executable: Path, target: Path) -> str:
+    environment = {
+        "CODEX_HOME": str(target),
+        "HOME": str(target),
+        "USERPROFILE": str(target),
+        "PATH": CONTROLLED_INSTALLER_PATH,
+        "LANG": "C",
+        "LC_ALL": "C",
+    }
+    with tempfile.TemporaryFile() as output:
+        try:
+            completed = subprocess.run(
+                [str(executable), "--version"],
+                env=environment,
+                cwd=target,
+                stdin=subprocess.DEVNULL,
+                stdout=output,
+                stderr=output,
+                check=False,
+                timeout=VERSION_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            fail("installed Codex version check timed out")
+        if completed.returncode != 0:
+            fail(f"installed Codex version check failed with exit {completed.returncode}")
+        size = output.tell()
+        if size > VERSION_OUTPUT_MAX_BYTES:
+            fail("installed Codex version output exceeded its size limit")
+        output.seek(0)
+        try:
+            text = output.read().decode("utf-8").strip()
+        except UnicodeDecodeError:
+            fail("installed Codex version output is not valid UTF-8")
+    match = re.fullmatch(r"codex-cli ([0-9][0-9A-Za-z.+-]*)", text)
+    if match is None or not SEMVER_PATTERN.fullmatch(match.group(1)):
+        fail(f"installed Codex returned an invalid version string: {text!r}")
+    return match.group(1)
+
+
+def inspect_software_installation(target: Path) -> SoftwareInstallation | None:
+    packages = target / "packages"
+    standalone = packages / "standalone"
+    releases = standalone / "releases"
+    current = standalone / "current"
+    visible_bin = target / "bin"
+    visible = visible_bin / "codex"
+    visible_host = visible_bin / "codex-code-mode-host"
+    required_entries = (packages, standalone, releases, current, visible_bin, visible)
+    if sys.platform == "darwin":
+        required_entries = (*required_entries, visible_host)
+    present = [path_entry_exists(path) for path in required_entries]
+    if not any(present):
+        return None
+    if not all(present):
+        fail("Codex standalone installation is incomplete")
+
+    validate_software_directory(packages, "Codex packages directory")
+    validate_software_directory(standalone, "Codex standalone root")
+    validate_software_directory(releases, "Codex standalone releases directory")
+    validate_software_directory(visible_bin, "Codex visible command directory")
+    try:
+        release_directory = resolve_software_symlink(current, "Codex standalone current entry")
+        releases_resolved = releases.resolve(strict=True)
+    except OSError as exc:
+        fail(f"Codex standalone current release cannot be resolved: {exc}")
+    if release_directory.parent != releases_resolved:
+        fail("Codex standalone current release escapes the releases directory")
+    validate_software_directory(release_directory, "Codex standalone current release")
+
+    metadata = read_package_metadata(release_directory / "codex-package.json")
+    expected_release_name = f"{metadata['version']}-{metadata['target']}"
+    if release_directory.name != expected_release_name:
+        fail("Codex standalone release directory identity is invalid")
+    validate_software_directory(release_directory / "bin", "Codex standalone binary directory")
+    validate_software_directory(
+        release_directory / metadata["resourcesDir"],
+        "Codex standalone resources directory",
+    )
+    validate_software_directory(
+        release_directory / metadata["pathDir"],
+        "Codex standalone path directory",
+    )
+    executable = release_directory / "bin" / "codex"
+    validate_software_executable(executable, "Codex standalone executable")
+    host_executable = release_directory / "bin" / "codex-code-mode-host"
+    validate_software_executable(host_executable, "Codex standalone code-mode host")
+    validate_software_executable(
+        release_directory / metadata["pathDir"] / "rg",
+        "Codex standalone ripgrep executable",
+    )
+    if sys.platform.startswith("linux"):
+        validate_software_executable(
+            release_directory / metadata["resourcesDir"] / "bwrap",
+            "Codex standalone Linux sandbox executable",
+        )
+    compatibility_entrypoint = resolve_software_symlink(
+        release_directory / "codex", "Codex standalone compatibility entrypoint"
+    )
+    if compatibility_entrypoint != executable:
+        fail("Codex standalone compatibility entrypoint is not bound to bin/codex")
+
+    visible_target = resolve_software_symlink(visible, "visible Codex command")
+    if visible_target != executable:
+        fail("visible Codex command is not bound to the current standalone release")
+    if sys.platform == "darwin":
+        visible_host_target = resolve_software_symlink(visible_host, "visible Codex code-mode host")
+        if visible_host_target != host_executable:
+            fail("visible Codex code-mode host is not bound to the current standalone release")
+    version = bounded_codex_version(executable, target)
+    if version != metadata["version"]:
+        fail("Codex standalone package metadata and executable versions disagree")
+    return SoftwareInstallation(
+        version=version,
+        executable=executable,
+        release_directory=release_directory,
+        host_target=metadata["target"],
+    )
+
+
+def require_current_software(target: Path) -> SoftwareInstallation:
+    installation = inspect_software_installation(target)
+    if installation is None:
+        fail("Codex CLI is not installed at the selected target; run install-cli")
+    if installation.version != TESTED_CODEX_VERSION:
+        fail(
+            f"Codex CLI {installation.version} is not current; "
+            f"run update-cli to install {TESTED_CODEX_VERSION}"
+        )
+    return installation
+
+
+def software_status(target: Path) -> dict[str, Any]:
+    installation = inspect_software_installation(target)
+    return {
+        "schema_version": 1,
+        "command": "software-status",
+        "target": str(target),
+        "installed": installation is not None,
+        "current": (installation is not None and installation.version == TESTED_CODEX_VERSION),
+        "version": installation.version if installation is not None else None,
+        "executable": str(installation.executable) if installation is not None else None,
+    }
+
+
+def download_verified_installer(destination: Path) -> None:
+    if INSTALLER_SIZE_BYTES > INSTALLER_MAX_BYTES:
+        fail("pinned Codex installer exceeds the download policy")
+    request = urllib.request.Request(
+        INSTALLER_URL,
+        headers={"User-Agent": f"nddev-codex-app/{VERSION}"},
+    )
+    digest = hashlib.sha256()
+    downloaded = 0
+    try:
+        with (
+            urllib.request.urlopen(request, timeout=120) as response,
+            destination.open("xb") as output,
+        ):
+            while True:
+                block = response.read(DOWNLOAD_CHUNK_SIZE)
+                if not block:
+                    break
+                downloaded += len(block)
+                if downloaded > INSTALLER_SIZE_BYTES or downloaded > INSTALLER_MAX_BYTES:
+                    fail("Codex installer exceeded its pinned size")
+                output.write(block)
+                digest.update(block)
+            output.flush()
+            os.fsync(output.fileno())
+    except (OSError, urllib.error.URLError) as exc:
+        fail(f"cannot download pinned Codex installer: {exc}")
+    if downloaded != INSTALLER_SIZE_BYTES:
+        fail(f"Codex installer size mismatch: expected {INSTALLER_SIZE_BYTES}, got {downloaded}")
+    actual_digest = digest.hexdigest()
+    if actual_digest != INSTALLER_SHA256:
+        fail(f"Codex installer SHA-256 mismatch: expected {INSTALLER_SHA256}, got {actual_digest}")
+    destination.chmod(0o700)
+    validate_software_executable(destination, "verified Codex installer")
+
+
+def installer_environment(target: Path, workspace: Path) -> dict[str, str]:
+    temporary_home = workspace / "home"
+    temporary_root = workspace / "tmp"
+    temporary_home.mkdir(mode=OWNER_DIRECTORY_MODE)
+    temporary_root.mkdir(mode=OWNER_DIRECTORY_MODE)
+    tools_directory = write_installer_curl_wrapper(workspace)
+    return {
+        "CODEX_HOME": str(target),
+        "CODEX_INSTALL_DIR": str(target / "bin"),
+        "CODEX_NON_INTERACTIVE": "1",
+        "CODEX_RELEASE": TESTED_CODEX_VERSION,
+        "HOME": str(temporary_home),
+        "USERPROFILE": str(temporary_home),
+        "TMPDIR": str(temporary_root),
+        "PATH": f"{tools_directory}:{CONTROLLED_INSTALLER_PATH}",
+        "SHELL": "/bin/sh",
+        "LANG": "C",
+        "LC_ALL": "C",
+    }
+
+
+def trusted_system_curl() -> Path:
+    for candidate in (Path("/usr/bin/curl"), Path("/bin/curl")):
+        try:
+            info = candidate.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            fail(f"cannot inspect system curl: {exc}")
+        mode = stat.S_IMODE(info.st_mode)
+        if (
+            stat.S_ISREG(info.st_mode)
+            and owner_of(info) == 0
+            and mode & stat.S_IXUSR
+            and not mode & 0o022
+        ):
+            return candidate
+    fail("a root-owned, non-writable system curl is required to install Codex")
+
+
+def write_installer_curl_wrapper(workspace: Path) -> Path:
+    system_curl = trusted_system_curl()
+    package_name, package_digest = PACKAGE_ASSETS[host_package_target()]
+    metadata = canonical_json(
+        {
+            "tag_name": INSTALLER_RELEASE_TAG,
+            "assets": [
+                {
+                    "name": package_name,
+                    "digest": f"sha256:{package_digest}",
+                },
+                {
+                    "name": PACKAGE_CHECKSUM_ASSET,
+                    "digest": f"sha256:{PACKAGE_CHECKSUM_SHA256}",
+                },
+            ],
+        }
+    ).decode("utf-8")
+    tools_directory = workspace / "tools"
+    tools_directory.mkdir(mode=OWNER_DIRECTORY_MODE)
+    validate_software_directory(tools_directory, "installer tools directory")
+    wrapper = tools_directory / "curl"
+    content = (
+        "#!/bin/sh\n"
+        "set -eu\n"
+        'for argument in "$@"; do\n'
+        f"  if [ \"$argument\" = '{RELEASE_METADATA_URL}' ]; then\n"
+        "    cat <<'NDDEV_CODEX_RELEASE_METADATA'\n"
+        f"{metadata}"
+        "NDDEV_CODEX_RELEASE_METADATA\n"
+        "    exit 0\n"
+        "  fi\n"
+        "done\n"
+        f"exec '{system_curl}' \"$@\"\n"
+    ).encode("utf-8")
+    write_new_file(wrapper, content, 0o700)
+    validate_software_executable(wrapper, "installer curl wrapper")
+    return tools_directory
+
+
+def run_verified_installer(installer: Path, target: Path, workspace: Path) -> None:
+    process: subprocess.Popen[bytes] | None = None
+    captured = bytearray()
+    try:
+        environment = installer_environment(target, workspace)
+        prior_umask = os.umask(0o077)
+        try:
+            process = subprocess.Popen(
+                ["/bin/sh", str(installer)],
+                cwd=workspace,
+                env=environment,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        finally:
+            os.umask(prior_umask)
+        if process.stdout is None:
+            fail("official Codex installer output pipe is unavailable")
+        selector = selectors.DefaultSelector()
+        selector.register(process.stdout, selectors.EVENT_READ)
+        deadline = time.monotonic() + INSTALLER_TIMEOUT_SECONDS
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    fail("official Codex installer timed out")
+                events = selector.select(timeout=min(remaining, 0.5))
+                if not events:
+                    if process.poll() is not None:
+                        block = os.read(process.stdout.fileno(), 65536)
+                        if block:
+                            captured.extend(block)
+                            if len(captured) > INSTALLER_OUTPUT_MAX_BYTES:
+                                fail("official Codex installer output exceeded its size limit")
+                            continue
+                        break
+                    continue
+                block = os.read(process.stdout.fileno(), 65536)
+                if not block:
+                    break
+                captured.extend(block)
+                if len(captured) > INSTALLER_OUTPUT_MAX_BYTES:
+                    fail("official Codex installer output exceeded its size limit")
+        finally:
+            selector.close()
+            process.stdout.close()
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            fail("official Codex installer timed out")
+        try:
+            returncode = process.wait(timeout=remaining)
+        except subprocess.TimeoutExpired:
+            fail("official Codex installer timed out")
+    except BaseException as exc:
+        terminate_installer_process(process)
+        if isinstance(exc, OSError):
+            fail(f"cannot execute official Codex installer: {exc}")
+        raise
+    if len(captured) > INSTALLER_OUTPUT_MAX_BYTES:
+        fail("official Codex installer output exceeded its size limit")
+    if returncode != 0:
+        terminate_installer_process(process)
+        detail = captured.decode("utf-8", errors="replace")
+        detail = re.sub(r"[^\x09\x0a\x20-\x7e]", "?", detail)[-2000:].strip()
+        suffix = f"; output: {detail}" if detail else ""
+        fail(f"official Codex installer failed with exit {returncode}{suffix}")
+
+
+def terminate_installer_process(process: subprocess.Popen[bytes] | None) -> None:
+    if process is None:
+        return
+    process_group = process.pid
+    try:
+        os.killpg(process_group, signal.SIGTERM)
+    except ProcessLookupError:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=INSTALLER_KILL_WAIT_SECONDS)
+        return
+    except OSError:
+        if process.poll() is None:
+            process.kill()
+    if wait_for_installer_process_group(
+        process,
+        process_group,
+        INSTALLER_TERMINATION_GRACE_SECONDS,
+    ):
+        return
+    try:
+        os.killpg(process_group, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    except OSError:
+        if process.poll() is None:
+            process.kill()
+    if not wait_for_installer_process_group(
+        process,
+        process_group,
+        INSTALLER_KILL_WAIT_SECONDS,
+    ):
+        fail("official Codex installer process group could not be terminated")
+
+
+def installer_process_group_exists(process_group: int) -> bool:
+    try:
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def wait_for_installer_process_group(
+    process: subprocess.Popen[bytes],
+    process_group: int,
+    timeout: float,
+) -> bool:
+    deadline = time.monotonic() + timeout
+    while True:
+        process.poll()
+        if not installer_process_group_exists(process_group):
+            return True
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(0.02, remaining))
+
+
+def install_or_update_cli(target: Path, command: str) -> dict[str, Any]:
+    before = inspect_software_installation(target)
+    if before is not None and before.version == TESTED_CODEX_VERSION:
+        return {
+            "schema_version": 1,
+            "command": command,
+            "target": str(target),
+            "changed": False,
+            "version": before.version,
+            "executable": str(before.executable),
+        }
+    if command == "install-cli" and before is not None:
+        fail("another Codex CLI version is installed; use update-cli")
+    if command == "update-cli" and before is None:
+        fail("Codex CLI is not installed at the selected target; use install-cli")
+
+    with target_lock(target):
+        ensure_target_directory(target, create=True)
+        current = inspect_software_installation(target)
+        if command == "install-cli" and current is not None:
+            fail("Codex CLI appeared concurrently; use update-cli")
+        if command == "update-cli" and current is None:
+            fail("Codex CLI disappeared before update")
+        with tempfile.TemporaryDirectory(prefix="nddev-codex-installer-") as raw:
+            workspace = Path(raw)
+            installer = workspace / INSTALLER_NAME
+            download_verified_installer(installer)
+            run_verified_installer(installer, target, workspace)
+        installation = require_current_software(target)
+    return {
+        "schema_version": 1,
+        "command": command,
+        "target": str(target),
+        "changed": True,
+        "version": installation.version,
+        "executable": str(installation.executable),
     }
 
 
@@ -2421,28 +2951,55 @@ def launch_codex(target: Path, child_args: list[str]) -> int:
     forwarded = child_args[1:] if child_args[:1] == ["--"] else child_args
     with target_lock(target) as guard:
         require_effective_clean_managed(target)
-        executable = shutil.which("codex")
-        if executable is None:
-            fail("codex executable was not found on PATH")
+        installation = require_current_software(target)
         environment = os.environ.copy()
         environment["CODEX_HOME"] = str(target)
         require_effective_clean_managed(target)
+        installation = require_current_software(target)
         revalidate_guard(guard, allow_missing=False)
-        return spawn_codex_child(executable, forwarded, environment)
+        return spawn_codex_child(str(installation.executable), forwarded, environment)
+
+
+def resolve_desktop_workspace(raw_workspace: str | None) -> Path | None:
+    if raw_workspace is None:
+        return None
+    workspace = Path(raw_workspace).expanduser()
+    if not workspace.is_absolute():
+        fail("--workspace must be an absolute path")
+    try:
+        info = workspace.lstat()
+    except FileNotFoundError:
+        fail("--workspace must already exist")
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        fail("--workspace must be a real directory")
+    return workspace.resolve(strict=True)
+
+
+def launch_desktop(target: Path, raw_workspace: str | None) -> int:
+    if sys.platform != "darwin":
+        fail("the official `codex app` desktop bridge is supported only on macOS")
+    workspace = resolve_desktop_workspace(raw_workspace)
+    with target_lock(target) as guard:
+        installation = require_current_software(target)
+        environment = os.environ.copy()
+        environment["CODEX_HOME"] = str(target)
+        installation = require_current_software(target)
+        revalidate_guard(guard, allow_missing=False)
+        return spawn_codex_child(
+            str(installation.executable),
+            ["app", *([str(workspace)] if workspace is not None else [])],
+            environment,
+        )
 
 
 def human_output(value: dict[str, Any]) -> str:
     command = value.get("command")
     if command == "list":
-        return "\n".join(
-            f"{item['id']}: {item['description']}" for item in value["setups"]
-        )
+        return "\n".join(f"{item['id']}: {item['description']}" for item in value["setups"])
     if command == "status":
         setup = f" ({value['setup_id']})" if value["setup_id"] else ""
         drift = f"; drift={','.join(value['drift'])}" if value["drift"] else ""
-        override = (
-            f"; {OVERRIDE_NAME}=present" if value["agents_override_present"] else ""
-        )
+        override = f"; {OVERRIDE_NAME}=present" if value["agents_override_present"] else ""
         return f"{value['state']}{setup}: {value['target']}{drift}{override}"
     if command == "plan":
         changes = ", ".join(value["changes"]) or "none"
@@ -2464,22 +3021,24 @@ def build_parser() -> argparse.ArgumentParser:
     add_target(status_parser)
 
     for command in ("plan", "apply", "switch"):
-        command_parser = subparsers.add_parser(
-            command, help=f"{command.title()} a setup."
-        )
+        command_parser = subparsers.add_parser(command, help=f"{command.title()} a setup.")
         command_parser.add_argument("--setup", required=True)
         add_target(command_parser)
 
-    restore_parser = subparsers.add_parser(
-        "restore", help="Restore a target-bound backup."
-    )
+    restore_parser = subparsers.add_parser("restore", help="Restore a target-bound backup.")
     restore_parser.add_argument("--backup", required=True, type=int, choices=range(10))
     add_target(restore_parser)
 
-    remove_parser = subparsers.add_parser(
-        "remove", help="Remove only managed setup files."
-    )
+    remove_parser = subparsers.add_parser("remove", help="Remove only managed setup files.")
     add_target(remove_parser)
+
+    for command, help_text in (
+        ("software-status", "Inspect target-owned Codex CLI software."),
+        ("install-cli", "Install the pinned official Codex CLI release."),
+        ("update-cli", "Update target-owned Codex CLI to the pinned release."),
+    ):
+        command_parser = subparsers.add_parser(command, help=help_text)
+        add_target(command_parser)
 
     launch_parser = subparsers.add_parser(
         "launch", help="Launch Codex with an isolated managed CODEX_HOME."
@@ -2489,6 +3048,15 @@ def build_parser() -> argparse.ArgumentParser:
         "codex_args",
         nargs=argparse.REMAINDER,
         help="Arguments forwarded to Codex after --.",
+    )
+
+    desktop_parser = subparsers.add_parser(
+        "desktop", help="Delegate desktop launch or install to official `codex app`."
+    )
+    add_target(desktop_parser)
+    desktop_parser.add_argument(
+        "--workspace",
+        help="Optional absolute workspace directory passed to `codex app`.",
     )
     return parser
 
@@ -2517,8 +3085,14 @@ def run(args: argparse.Namespace) -> dict[str, Any] | int:
         return restore_slot(target, args.backup)
     if args.command == "remove":
         return remove_setup(target)
+    if args.command == "software-status":
+        return software_status(target)
+    if args.command in {"install-cli", "update-cli"}:
+        return install_or_update_cli(target, args.command)
     if args.command == "launch":
         return launch_codex(target, list(args.codex_args))
+    if args.command == "desktop":
+        return launch_desktop(target, args.workspace)
     fail(f"unsupported command: {args.command}")
 
 
@@ -2536,11 +3110,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             error_message = str(exc)
         if getattr(args, "output_json", False):
-            print(
-                json.dumps(
-                    {"schema_version": 1, "error": error_message}, sort_keys=True
-                )
-            )
+            print(json.dumps({"schema_version": 1, "error": error_message}, sort_keys=True))
         else:
             print(f"nddev-codex: error: {error_message}", file=sys.stderr)
         return 2

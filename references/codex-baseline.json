@@ -1,12 +1,18 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "codex_cli": {
-    "minimum_version_ref": "build/version.json:codex_cli_requires",
     "tested_version_ref": "build/version.json:codex_cli_tested"
   },
   "evidence": {
-    "minimum_version_basis": "Official mixed-version permission-profile compatibility threshold",
+    "official_desktop_documentation": "https://learn.chatgpt.com/docs/quickstart#setup",
+    "official_desktop_merge_documentation": "https://learn.chatgpt.com/docs/whats-new#use-codex-in-the-chatgpt-desktop-app",
+    "official_desktop_command_documentation": "https://learn.chatgpt.com/docs/developer-commands#codex-app",
+    "official_pinned_cli_desktop_source": "https://github.com/openai/codex/blob/rust-v0.144.3/codex-rs/cli/src/desktop_app/mac.rs",
+    "permission_profile_compatibility_basis": "Official mixed-version permission-profile compatibility threshold",
     "official_agents_documentation": "https://learn.chatgpt.com/docs/agent-configuration/agents-md#how-codex-discovers-guidance",
+    "official_configuration_precedence": "https://learn.chatgpt.com/docs/config-file/config-basic#configuration-precedence",
+    "official_release": "https://github.com/openai/codex/releases/tag/rust-v0.144.3",
+    "official_standalone_installer": "https://github.com/openai/codex/releases/download/rust-v0.144.3/install.sh",
     "official_permissions_documentation": "https://learn.chatgpt.com/docs/permissions"
   },
   "permission_profiles": {
@@ -14,7 +20,18 @@
     "custom_profiles_surface": "[permissions.<name>]",
     "custom_profiles_used": false,
     "managed_enforcement": false,
+    "minimum_codex_version_ref": "build/version.json:codex_permission_profiles_since",
     "status": "beta"
+  },
+  "software_install": {
+    "desktop_configuration_binding": "not-guaranteed-by-codex-app",
+    "desktop_delegate": "codex app",
+    "desktop_documented_product": "ChatGPT",
+    "desktop_pinned_cli_packaging": "Codex.app/Codex.dmg",
+    "installer_asset": "install.sh",
+    "installer_release": "rust-v0.144.3",
+    "installed_version": "0.144.3",
+    "standalone_layout": "packages/standalone"
   },
   "verified_date": "2026-07-13",
   "verified_version_ref": "build/version.json:codex_cli_tested"
