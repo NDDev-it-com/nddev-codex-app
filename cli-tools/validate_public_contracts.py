@@ -109,9 +109,7 @@ def main() -> int:
 
     if manifest is not None and version is not None:
         if manifest.get("build_version") != version.get("build_version"):
-            errors.append(
-                "build/manifest.json:build_version disagrees with build/version.json"
-            )
+            errors.append("build/manifest.json:build_version disagrees with build/version.json")
 
     if contract is not None:
         if contract.get("contract_version") != 3:
@@ -128,13 +126,13 @@ def main() -> int:
     if baseline is not None and version is not None:
         tested_ref = baseline.get("codex_cli", {}).get("tested_version_ref", "")
         resolve_version_ref(str(tested_ref), version, errors)
-        minimum_ref = baseline.get("permission_profiles", {}).get(
-            "minimum_codex_version_ref", ""
-        )
+        minimum_ref = baseline.get("permission_profiles", {}).get("minimum_codex_version_ref", "")
         resolve_version_ref(str(minimum_ref), version, errors)
 
     setups_root = ROOT / "setups"
-    setup_dirs = sorted(p for p in setups_root.iterdir() if p.is_dir()) if setups_root.is_dir() else []
+    setup_dirs = (
+        sorted(p for p in setups_root.iterdir() if p.is_dir()) if setups_root.is_dir() else []
+    )
     if not setup_dirs:
         errors.append("setups/: no setup projections found")
     seen_ids: list[str] = []
