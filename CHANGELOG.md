@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.3] - 2026-07-14
+
+### Changed
+
+- Tested Codex CLI advanced to the official `rust-v0.144.4` release
+  (2026-07-14; vendor-declared "No user-facing changes in this patch
+  release"). All version pins, installer references, and the builder's
+  config-schema source link now point at 0.144.4.
+- `build/release-evidence.json` rebound to the 0.3.3 module content
+  (execution-bound schema 2, pending until CI lane records exist).
+
 ## 0.3.2 - 2026-07-13
 
 ### Fixed

@@ -46,9 +46,9 @@ days. These targets are best-effort.
   they are not an administrator enforcement mechanism.
 - Permission profiles are a beta Codex surface whose configuration syntax is
   compatible from Codex CLI 0.138.0. This build installs, launches, and tests
-  exactly 0.144.3.
+  exactly 0.144.4.
 - `install-cli` and `update-cli` verify the exact pinned official
-  `rust-v0.144.3` installer asset before execution. The official installer then
+  `rust-v0.144.4` installer asset before execution. The official installer then
   downloads the pinned checksum manifest and host package and verifies their
   release digests and package checksum from isolated temporary state with a
   fixed release and install root. Abnormal installer exits terminate its whole
