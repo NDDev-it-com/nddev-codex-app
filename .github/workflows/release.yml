@@ -236,6 +236,154 @@ jobs:
           tag_commit="$(git rev-parse --verify "${RELEASE_SHA}^{commit}")"
           git merge-base --is-ancestor "$tag_commit" refs/remotes/origin/main
 
+      - name: Verify release-evidence bundle
+        run: |
+          set -euo pipefail
+          python3 -I <<'BUNDLE'
+          import datetime as dt
+          import hashlib
+          import json
+          import pathlib
+          import re
+          import subprocess
+          import sys
+
+          EVIDENCE_PATH = "build/release-evidence.json"
+          REQUIRED_LANES = (
+              "fast",
+              "release",
+              "platform:macos",
+              "platform:ubuntu",
+              "benchmark:macos",
+              "benchmark:ubuntu",
+          )
+          SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
+
+          def fail(message):
+              print(f"::error::{message}", file=sys.stderr)
+              raise SystemExit(1)
+
+          def parse_utc(value):
+              if not isinstance(value, str) or not value.endswith("Z"):
+                  return None
+              try:
+                  parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+              except ValueError:
+                  return None
+              return parsed if parsed.utcoffset() == dt.timedelta(0) else None
+
+          try:
+              evidence = json.loads(pathlib.Path(EVIDENCE_PATH).read_text(encoding="utf-8"))
+          except (OSError, json.JSONDecodeError) as exc:
+              fail(f"cannot read {EVIDENCE_PATH}: {exc}")
+          if not isinstance(evidence, dict):
+              fail("release-evidence must be a JSON object")
+          if evidence.get("schema_version") != 2:
+              fail("release-evidence schema_version must be 2 (execution-bound)")
+          module = evidence.get("module")
+          if not isinstance(module, dict) or module.get("repository") != "NDDev-it-com/nddev-codex-app":
+              fail("release-evidence.module.repository must be this repository")
+          digest = module.get("setup_digest")
+          if not isinstance(digest, str) or SHA256.fullmatch(digest) is None:
+              fail("release-evidence.module.setup_digest must be a sha256 content digest")
+
+          # Bind the recorded digest to the exact tagged content: hash every
+          # tracked blob by path and id, excluding the evidence file itself
+          # (identical to scripts/evidence.compute_setup_digest in the harness).
+          listing = subprocess.run(
+              ["git", "ls-files", "-s"], capture_output=True, text=True, check=True
+          ).stdout
+          entries = []
+          for line in listing.splitlines():
+              metadata, _, path = line.partition("\t")
+              fields = metadata.split()
+              if not path or len(fields) != 3:
+                  fail(f"unexpected git ls-files entry: {line!r}")
+              if path == EVIDENCE_PATH:
+                  continue
+              entries.append(f"{path} {fields[1]}")
+          recomputed = "sha256:" + hashlib.sha256("\n".join(sorted(entries)).encode("utf-8")).hexdigest()
+          if digest != recomputed:
+              fail(
+                  "release-evidence.module.setup_digest does not match the tagged content "
+                  f"(recorded {digest}, recomputed {recomputed})"
+              )
+
+          harness = evidence.get("harness")
+          if not isinstance(harness, dict) or re.fullmatch(r"[0-9a-f]{40}", str(harness.get("commit"))) is None:
+              fail("release-evidence.harness.commit must be a full harness commit SHA")
+          adapter = evidence.get("adapter")
+          version_file = pathlib.Path("VERSION").read_text(encoding="utf-8").strip()
+          if not isinstance(adapter, dict) or adapter.get("version") != version_file:
+              fail("release-evidence.adapter.version must equal VERSION")
+          if not isinstance(evidence.get("vendor"), dict) or not evidence["vendor"]:
+              fail("release-evidence.vendor must be a non-empty object")
+          platforms = evidence.get("platforms")
+          if not isinstance(platforms, list) or not platforms:
+              fail("release-evidence.platforms must be a non-empty array")
+
+          promotion = evidence.get("promotion")
+          if not isinstance(promotion, dict) or promotion.get("decision") != "approved":
+              fail("release-evidence.promotion.decision must be approved; pending bundles cannot release")
+          approved_by = promotion.get("approved_by")
+          if not isinstance(approved_by, dict) or not str(approved_by.get("mechanism", "")).strip() or not str(approved_by.get("identity", "")).strip():
+              fail("release-evidence.promotion.approved_by must record mechanism and identity")
+
+          lanes = evidence.get("lanes")
+          if not isinstance(lanes, list):
+              fail("release-evidence.lanes must be an array of execution records")
+          seen = {}
+          for index, record in enumerate(lanes):
+              context = f"release-evidence.lanes[{index}]"
+              if not isinstance(record, dict):
+                  fail(f"{context} must be an object")
+              if record.get("status") != "passed":
+                  fail(f"{context}: status must be passed")
+              lane = str(record.get("lane", ""))
+              seen[lane] = seen.get(lane, 0) + 1
+              for key in ("workflow", "run_id", "runner", "toolchain", "platform"):
+                  if not str(record.get(key, "")).strip():
+                      fail(f"{context}: {key} must be a non-empty string")
+              if record.get("setup_digest") != digest:
+                  fail(f"{context}: setup_digest does not match the bundle module digest")
+              if not isinstance(record.get("log_digest"), str) or SHA256.fullmatch(record["log_digest"]) is None:
+                  fail(f"{context}: log_digest must be a sha256 digest")
+              started = parse_utc(record.get("started_at_utc"))
+              completed = parse_utc(record.get("completed_at_utc"))
+              if started is None or completed is None or started > completed:
+                  fail(f"{context}: execution timestamps are missing or inverted")
+          for lane in REQUIRED_LANES:
+              if seen.get(lane, 0) != 1:
+                  fail(f"release-evidence: lane {lane} must have exactly one passed execution record")
+          if set(seen) - set(REQUIRED_LANES):
+              fail("release-evidence: unknown lane records present")
+
+          observation = evidence.get("vendor_observation")
+          if not isinstance(observation, dict):
+              fail("release-evidence.vendor_observation must record the currentness check")
+          for key in ("source", "observed_latest_version", "event_date"):
+              if not str(observation.get(key, "")).strip():
+                  fail(f"release-evidence.vendor_observation.{key} must be a non-empty string")
+          if parse_utc(observation.get("observed_at_utc")) is None:
+              fail("release-evidence.vendor_observation.observed_at_utc must be ISO-8601 UTC")
+          if not isinstance(observation.get("artifact_evidence_digest"), str) or SHA256.fullmatch(observation["artifact_evidence_digest"]) is None:
+              fail("release-evidence.vendor_observation.artifact_evidence_digest must be a sha256 digest")
+
+          generated_at = parse_utc(evidence.get("generated_at_utc"))
+          expires_at = parse_utc(evidence.get("expires_at_utc"))
+          if generated_at is None or expires_at is None:
+              fail("release-evidence timestamps must be ISO-8601 UTC ending in Z")
+          now = dt.datetime.now(dt.timezone.utc)
+          if generated_at >= expires_at:
+              fail("release-evidence.generated_at_utc must precede expires_at_utc")
+          if now >= expires_at:
+              fail("release-evidence has expired; regenerate after re-validation")
+          if now < generated_at:
+              fail("release-evidence.generated_at_utc is in the future")
+
+          print(f"ok: execution-bound release-evidence verified for {version_file}")
+          BUNDLE
+
   publish:
     name: Publish attested immutable release
     needs: verify
