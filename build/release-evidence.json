@@ -1,0 +1,38 @@
+{
+  "schema_version": 2,
+  "module": {
+    "repository": "NDDev-it-com/nddev-codex-app",
+    "setup_digest": "sha256:5a4b6a2b19bf8d1d50accd5be0f30395e6d6c7f9213b9c620d0ea015b59f7d7b"
+  },
+  "harness": {
+    "repository": "NDDev-it-com/nddev-harnesses",
+    "commit": "4a87355de2bf4019fcd106a73778c72ab99fac50"
+  },
+  "adapter": {
+    "id": "codex",
+    "version": "0.3.2"
+  },
+  "vendor": {
+    "cli_version": "0.144.3",
+    "permission_profiles_since": "0.138.0"
+  },
+  "platforms": [
+    {
+      "platform": "macos",
+      "vendor_support_tier": "stable",
+      "nddev_support_tier": "supported"
+    },
+    {
+      "platform": "ubuntu",
+      "vendor_support_tier": "stable",
+      "nddev_support_tier": "supported"
+    }
+  ],
+  "lanes": [],
+  "generated_at_utc": "2026-07-14T02:51:49Z",
+  "expires_at_utc": "2027-01-10T02:51:49Z",
+  "promotion": {
+    "decision": "pending",
+    "waivers": []
+  }
+}
