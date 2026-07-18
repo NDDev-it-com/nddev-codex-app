@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.5] - 2026-07-18
+
+### Fixed
+
+- The co-owned `config.toml` drift check no longer imports `tomllib`, so the
+  manager keeps running on Python interpreters older than 3.11. The base-intact
+  check is now line-based (every managed base `key = value` line must survive
+  verbatim; the Codex runtime's `[projects.*]` additions are tolerated), which
+  is sufficient for the controlled, simple setup base and carries no new runtime
+  dependency.
+
 ## [0.3.4] - 2026-07-18
 
 ### Changed
