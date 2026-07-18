@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.6] - 2026-07-18
+
+### Changed
+
+- Tested Codex CLI advanced to the official `rust-v0.144.6` release (published
+  2026-07-18): version/tag/date, the SHA256SUMS manifest hash, and all four
+  package sha256/size. `install.sh`/`install.ps1` remain byte-identical to the
+  prior release, so those installer pins are unchanged.
+- Bumped the nddev-builder plugin to 0.3.2 so an in-place `install-builder`
+  re-materializes the plugin cache cleanly after the builder's config-schema
+  provenance link advanced to 0.144.6 (the plugin cache is keyed by version).
+
 ## [0.3.5] - 2026-07-18
 
 ### Fixed

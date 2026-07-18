@@ -42,7 +42,7 @@ OWNER_FILE_MODE = 0o600
 OWNER_DIRECTORY_MODE = 0o700
 METADATA_MAX_BYTES = 256 * 1024
 MANAGED_PAYLOAD_MAX_BYTES = 8 * 1024 * 1024
-TESTED_CODEX_VERSION = "0.144.5"
+TESTED_CODEX_VERSION = "0.144.6"
 INSTALLER_RELEASE_TAG = f"rust-v{TESTED_CODEX_VERSION}"
 INSTALLER_NAME = "install.sh"
 INSTALLER_URL = (
@@ -54,23 +54,23 @@ RELEASE_METADATA_URL = (
     f"https://api.github.com/repos/openai/codex/releases/tags/{INSTALLER_RELEASE_TAG}"
 )
 PACKAGE_CHECKSUM_ASSET = "codex-package_SHA256SUMS"
-PACKAGE_CHECKSUM_SHA256 = "406f99fddeb6cdbce180f35dfdcf17014a0bde06f7c99d0e34be88660f22ab92"
+PACKAGE_CHECKSUM_SHA256 = "db72a7585c594e141201dea9fea37a3686d2668aaee603b96794712c8e394e0d"
 PACKAGE_ASSETS = {
     "aarch64-apple-darwin": (
         "codex-package-aarch64-apple-darwin.tar.gz",
-        "8d1cd2d53b2070919d12c054b57485b6e08347e2666cb20932e9e95eb2aa2901",
+        "bcbfa76650b6c581505aa5178c1e799d37ff12fc43a35ff16c90b97fa757e63f",
     ),
     "x86_64-apple-darwin": (
         "codex-package-x86_64-apple-darwin.tar.gz",
-        "8322b8cf3747014b435318d2f34ee6d8f566b61360e5a770e30311cc0d90205b",
+        "daa3df37c8a041280f52a2198dbe7acbead64936b23f8b660edf9d886df5f9da",
     ),
     "aarch64-unknown-linux-musl": (
         "codex-package-aarch64-unknown-linux-musl.tar.gz",
-        "7703bbb6cbd4ba3df60c32d200bca2987691047353d3a6c825af2b8bc99f1808",
+        "b4359896bb548e02fdd72ea0cb3395fe8a88d20d3a4a421c4481e504f8e8927f",
     ),
     "x86_64-unknown-linux-musl": (
         "codex-package-x86_64-unknown-linux-musl.tar.gz",
-        "23a7022a493c5404c50c62a4ad5655836adbee019d93c73114954d8daff20053",
+        "99ae48e4743da6c530ecd998ab2f7e66572c092f4190c88dca8236c07b06ce1d",
     ),
 }
 INSTALLER_MAX_BYTES = 64 * 1024

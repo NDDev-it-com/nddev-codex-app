@@ -7,12 +7,12 @@
     "official_desktop_documentation": "https://learn.chatgpt.com/docs/quickstart#setup",
     "official_desktop_merge_documentation": "https://learn.chatgpt.com/docs/whats-new#use-codex-in-the-chatgpt-desktop-app",
     "official_desktop_command_documentation": "https://learn.chatgpt.com/docs/developer-commands#codex-app",
-    "official_pinned_cli_desktop_source": "https://github.com/openai/codex/blob/rust-v0.144.5/codex-rs/cli/src/desktop_app/mac.rs",
+    "official_pinned_cli_desktop_source": "https://github.com/openai/codex/blob/rust-v0.144.6/codex-rs/cli/src/desktop_app/mac.rs",
     "permission_profile_compatibility_basis": "Official mixed-version permission-profile compatibility threshold",
     "official_agents_documentation": "https://learn.chatgpt.com/docs/agent-configuration/agents-md#how-codex-discovers-guidance",
     "official_configuration_precedence": "https://learn.chatgpt.com/docs/config-file/config-basic#configuration-precedence",
-    "official_release": "https://github.com/openai/codex/releases/tag/rust-v0.144.5",
-    "official_standalone_installer": "https://github.com/openai/codex/releases/download/rust-v0.144.5/install.sh",
+    "official_release": "https://github.com/openai/codex/releases/tag/rust-v0.144.6",
+    "official_standalone_installer": "https://github.com/openai/codex/releases/download/rust-v0.144.6/install.sh",
     "official_permissions_documentation": "https://learn.chatgpt.com/docs/permissions"
   },
   "permission_profiles": {
@@ -29,8 +29,8 @@
     "desktop_documented_product": "ChatGPT",
     "desktop_pinned_cli_packaging": "Codex.app/Codex.dmg",
     "installer_asset": "install.sh",
-    "installer_release": "rust-v0.144.5",
-    "installed_version": "0.144.5",
+    "installer_release": "rust-v0.144.6",
+    "installed_version": "0.144.6",
     "standalone_layout": "packages/standalone"
   },
   "verified_date": "2026-07-18",
