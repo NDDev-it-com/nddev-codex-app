@@ -18,7 +18,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import tomllib
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
@@ -894,23 +893,31 @@ def load_stamp(target: Path) -> dict[str, Any] | None:
 
 
 def config_base_intact(current: bytes, base: bytes) -> bool:
-    """Return True when every top-level key the base config.toml declares is
-    present in the current config.toml with an equal value.
+    """Return True when every managed base line is present verbatim in the
+    current config.toml.
 
-    config.toml is co-owned. The manager writes the setup base, but the Codex
-    runtime persists project-trust decisions into it at launch as new
-    ``[projects."<workspace>"]`` tables (and comparable runtime state). Those
-    additions must not read as drift, so the managed guarantee is scoped to the
-    base keys the manager owns rather than to an exact byte image. Any change to
-    an owned key -- or a config.toml that no longer parses -- is still drift.
-    AGENTS.md stays byte-exact because the runtime never writes it.
+    config.toml is co-owned: the manager writes the setup base, and the Codex
+    runtime appends project-trust decisions to it at launch as new
+    ``[projects."<workspace>"]`` tables. The managed guarantee is scoped to the
+    base ``key = value`` lines the manager owns -- each must survive verbatim --
+    while the runtime's added lines are tolerated. A changed or removed base
+    line reads as drift; AGENTS.md stays byte-exact because the runtime never
+    writes it. Line-based rather than TOML-parsed so the manager keeps running
+    on Pythons without ``tomllib`` (3.11+); the setup base is our own
+    controlled, simple key/value text.
     """
     try:
-        current_doc = tomllib.loads(current.decode("utf-8"))
-        base_doc = tomllib.loads(base.decode("utf-8"))
-    except (tomllib.TOMLDecodeError, UnicodeDecodeError, ValueError):
+        current_lines = set(current.decode("utf-8").splitlines())
+        base_lines = base.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
         return False
-    return all(key in current_doc and current_doc[key] == value for key, value in base_doc.items())
+    for line in base_lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if line not in current_lines:
+            return False
+    return True
 
 
 def _config_base_intact_on_disk(target: Path, setup_id: object) -> bool:
