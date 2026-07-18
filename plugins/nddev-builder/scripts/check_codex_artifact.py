@@ -288,8 +288,8 @@ SAFE_SECRET_PLACEHOLDERS = {
     "xxxxxxxx",
 }
 
-# Top-level properties from the official Codex 0.144.5 ConfigToml schema:
-# https://github.com/openai/codex/blob/rust-v0.144.5/codex-rs/core/config.schema.json
+# Top-level properties from the official Codex 0.144.6 ConfigToml schema:
+# https://github.com/openai/codex/blob/rust-v0.144.6/codex-rs/core/config.schema.json
 # Validation is intentionally top-level only. Named tables such as
 # mcp_servers.<name>, permissions.<name>, plugins, marketplaces, projects, and
 # agents have dynamic keys and are validated by Codex or focused checkers.
@@ -2819,7 +2819,7 @@ def _validate_config_file(path: Path, *, budget: ScanBudget | None = None) -> Ar
             path,
             payload,
             CONFIG_TOP_LEVEL_KEYS,
-            "Codex 0.144.5 config top-level",
+            "Codex 0.144.6 config top-level",
         )
     return report
 
