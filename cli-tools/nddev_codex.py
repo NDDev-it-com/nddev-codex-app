@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import tomllib
 import urllib.error
 import urllib.request
 from collections.abc import Iterator
@@ -42,7 +43,7 @@ OWNER_FILE_MODE = 0o600
 OWNER_DIRECTORY_MODE = 0o700
 METADATA_MAX_BYTES = 256 * 1024
 MANAGED_PAYLOAD_MAX_BYTES = 8 * 1024 * 1024
-TESTED_CODEX_VERSION = "0.144.4"
+TESTED_CODEX_VERSION = "0.144.5"
 INSTALLER_RELEASE_TAG = f"rust-v{TESTED_CODEX_VERSION}"
 INSTALLER_NAME = "install.sh"
 INSTALLER_URL = (
@@ -54,23 +55,23 @@ RELEASE_METADATA_URL = (
     f"https://api.github.com/repos/openai/codex/releases/tags/{INSTALLER_RELEASE_TAG}"
 )
 PACKAGE_CHECKSUM_ASSET = "codex-package_SHA256SUMS"
-PACKAGE_CHECKSUM_SHA256 = "09e949a00cbcbd95d5a3d3bd6c7647e38965e944a3f7d2eb148781d3a488414a"
+PACKAGE_CHECKSUM_SHA256 = "406f99fddeb6cdbce180f35dfdcf17014a0bde06f7c99d0e34be88660f22ab92"
 PACKAGE_ASSETS = {
     "aarch64-apple-darwin": (
         "codex-package-aarch64-apple-darwin.tar.gz",
-        "312e6fa2826596fb23cc1193c30d51902b6522c36ccc43b36417590e0ebd533d",
+        "8d1cd2d53b2070919d12c054b57485b6e08347e2666cb20932e9e95eb2aa2901",
     ),
     "x86_64-apple-darwin": (
         "codex-package-x86_64-apple-darwin.tar.gz",
-        "666671fbe761fe1fd57d74e725c5a306729f81f4fbefc16a01a0595e69864d41",
+        "8322b8cf3747014b435318d2f34ee6d8f566b61360e5a770e30311cc0d90205b",
     ),
     "aarch64-unknown-linux-musl": (
         "codex-package-aarch64-unknown-linux-musl.tar.gz",
-        "b1bc561a5bf74f9c5767c698275ae8043cee2ce45341098048b0b0b8b4e2cfc5",
+        "7703bbb6cbd4ba3df60c32d200bca2987691047353d3a6c825af2b8bc99f1808",
     ),
     "x86_64-unknown-linux-musl": (
         "codex-package-x86_64-unknown-linux-musl.tar.gz",
-        "d0a7bdb2ca821c9bb5f4cc2fb11a4ed96025db63b20d1bddf1e632361a108220",
+        "23a7022a493c5404c50c62a4ad5655836adbee019d93c73114954d8daff20053",
     ),
 }
 INSTALLER_MAX_BYTES = 64 * 1024
@@ -892,6 +893,46 @@ def load_stamp(target: Path) -> dict[str, Any] | None:
     return stamp
 
 
+def config_base_intact(current: bytes, base: bytes) -> bool:
+    """Return True when every top-level key the base config.toml declares is
+    present in the current config.toml with an equal value.
+
+    config.toml is co-owned. The manager writes the setup base, but the Codex
+    runtime persists project-trust decisions into it at launch as new
+    ``[projects."<workspace>"]`` tables (and comparable runtime state). Those
+    additions must not read as drift, so the managed guarantee is scoped to the
+    base keys the manager owns rather than to an exact byte image. Any change to
+    an owned key -- or a config.toml that no longer parses -- is still drift.
+    AGENTS.md stays byte-exact because the runtime never writes it.
+    """
+    try:
+        current_doc = tomllib.loads(current.decode("utf-8"))
+        base_doc = tomllib.loads(base.decode("utf-8"))
+    except (tomllib.TOMLDecodeError, UnicodeDecodeError, ValueError):
+        return False
+    return all(key in current_doc and current_doc[key] == value for key, value in base_doc.items())
+
+
+def _config_base_intact_on_disk(target: Path, setup_id: object) -> bool:
+    """Read the target's config.toml and confirm the managed base is intact,
+    tolerating Codex's runtime additions. Any read/render failure is treated as
+    drift (conservative)."""
+    if not isinstance(setup_id, str):
+        return False
+    try:
+        current, _ = read_target_file(
+            target,
+            "config.toml",
+            f"managed path {target / 'config.toml'}",
+            owner_only=False,
+            max_bytes=MANAGED_PAYLOAD_MAX_BYTES,
+        )
+        _, rendered = render_setup(setup_id)
+    except (SystemExit, OSError, ValueError):
+        return False
+    return config_base_intact(current, rendered["config.toml"])
+
+
 def inspect_target(target: Path) -> dict[str, Any]:
     if not ensure_target_directory(target, create=False):
         return {
@@ -928,12 +969,17 @@ def inspect_target(target: Path) -> dict[str, Any]:
             drift.append(name)
             continue
         owner_matches = not hasattr(os, "geteuid") or snapshot.owner == os.geteuid()
-        if (
-            snapshot.digest != expected[name]
-            or snapshot.mode != OWNER_FILE_MODE
-            or not owner_matches
-        ):
+        if snapshot.mode != OWNER_FILE_MODE or not owner_matches:
             drift.append(name)
+            continue
+        if snapshot.digest == expected[name]:
+            continue
+        # config.toml is co-owned: the Codex runtime persists [projects.*] trust
+        # into it at launch. Tolerate additions that leave the managed base
+        # intact; a damaged base, or any change to AGENTS.md, is still drift.
+        if name == "config.toml" and _config_base_intact_on_disk(target, stamp["setup_id"]):
+            continue
+        drift.append(name)
     stamp_snapshot = snapshot_target_file(target, STAMP_NAME, owner_only=False)
     if stamp_snapshot is None:
         drift.append(STAMP_NAME)
@@ -979,7 +1025,14 @@ def require_effective_clean_managed(target: Path) -> dict[str, Any]:
             owner_only=True,
             max_bytes=(METADATA_MAX_BYTES if name == STAMP_NAME else MANAGED_PAYLOAD_MAX_BYTES),
         )
-        if actual_content != expected_content:
+        # config.toml is co-owned: tolerate the Codex runtime's [projects.*]
+        # trust additions as long as the managed base is intact. AGENTS.md and
+        # the stamp stay byte-exact.
+        if name == "config.toml":
+            intact = config_base_intact(actual_content, expected_content)
+        else:
+            intact = actual_content == expected_content
+        if not intact:
             fail(
                 "managed target is not the current canonical catalog setup; "
                 f"run apply --setup {setup_id} before launch"

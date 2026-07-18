@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.4] - 2026-07-18
+
+### Changed
+
+- Tested Codex CLI advanced to the official `rust-v0.144.5` release
+  (published 2026-07-16). All version pins, installer references, package
+  checksums/sizes, and the builder's config-schema source link now point at
+  0.144.5. The `install.sh`/`install.ps1` installers are byte-identical to
+  0.144.4, so those pins are unchanged.
+
+### Fixed
+
+- `config.toml` is now treated as co-owned managed state. The Codex runtime
+  persists project-trust decisions into it at launch (new
+  `[projects."<workspace>"]` tables), which previously read as drift and could
+  fail-close the next `launch`. Drift detection and the launch pre-check now
+  verify the managed base keys are intact while tolerating the runtime's
+  additions; a change to a managed base key, or any change to `AGENTS.md`, is
+  still drift.
+
 ## [0.3.3] - 2026-07-14
 
 ### Changed

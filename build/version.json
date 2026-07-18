@@ -1,7 +1,7 @@
 {
-  "build_version": "0.3.3",
+  "build_version": "0.3.4",
   "codex_permission_profiles_since": "0.138.0",
-  "codex_cli_tested": "0.144.4",
+  "codex_cli_tested": "0.144.5",
   "nddev_builder_plugin_version": "0.3.1",
   "python_requires": ">=3.10",
   "runtime_baseline_ref": "references/codex-baseline.json",
