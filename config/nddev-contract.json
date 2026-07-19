@@ -32,7 +32,8 @@
       "app",
       "config",
       "instructions",
-      "rule"
+      "rule",
+      "requirements"
     ],
     "checker": "plugins/nddev-builder/scripts/check_codex_artifact.py",
     "generator": "plugins/nddev-builder/scripts/create_codex_artifact.py",
@@ -62,6 +63,7 @@
       "marketplace": "https://learn.chatgpt.com/docs/build-plugins#marketplace-metadata",
       "mcp": "https://learn.chatgpt.com/docs/extend/mcp",
       "plugins": "https://learn.chatgpt.com/docs/build-plugins#plugin-structure",
+      "requirements": "https://learn.chatgpt.com/docs/permissions",
       "rules": "https://learn.chatgpt.com/docs/agent-configuration/rules#create-a-rules-file",
       "skills": "https://learn.chatgpt.com/docs/build-skills"
     },

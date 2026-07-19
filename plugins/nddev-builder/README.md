@@ -12,7 +12,7 @@ The artifact contracts used by every workflow are documented in
 
 ## Skill inventory
 
-The plugin exposes exactly 26 skills: ten creator/checker pairs, one
+The plugin exposes exactly 28 skills: eleven creator/checker pairs, one
 cross-artifact reviewer, and five workflow/lifecycle skills.
 
 | Artifact | Creator | Checker |
@@ -27,6 +27,7 @@ cross-artifact reviewer, and five workflow/lifecycle skills.
 | Config and permission profile | `codex-config-creator` | `codex-config-checker` |
 | `AGENTS.md` instructions | `codex-instructions-creator` | `codex-instructions-checker` |
 | Execpolicy rule | `codex-rule-creator` | `codex-rule-checker` |
+| Managed requirements | `codex-requirements-creator` | `codex-requirements-checker` |
 | Cross-artifact review | `codex-artifact-reviewer` | — |
 
 The five workflow/lifecycle skills orchestrate the artifacts above into a
@@ -67,7 +68,10 @@ python3 scripts/check_codex_artifact.py skill \
 ```
 
 Supported generator/checker kinds are `skill`, `plugin`, `marketplace`,
-`agent`, `hook`, `mcp`, `app`, `config`, `instructions`, and `rule`. Run each
+`agent`, `hook`, `mcp`, `app`, `config`, `instructions`, `rule`, and
+`requirements`. The `marketplace` checker accepts `local`, `url`, `git-subdir`,
+and `npm` plugin sources and also discovers a sibling `api_marketplace.json`
+catalog. Run each
 script with `--help` before using kind-specific options such as `--app-id`,
 `--transport`, `--event`, or `--prefix`. Use `--json` when another tool needs a
 stable machine-readable result.

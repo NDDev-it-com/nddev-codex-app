@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Requirements Creator"
+  short_description: "Create a managed Codex requirements.toml layer"
+  default_prompt: "Use $codex-requirements-creator to author a managed Codex requirements.toml policy."

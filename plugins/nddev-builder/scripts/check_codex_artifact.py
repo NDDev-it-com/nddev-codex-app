@@ -34,6 +34,7 @@ KINDS = (
     "config",
     "instructions",
     "rule",
+    "requirements",
     "all",
 )
 NAME_RE = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
@@ -2501,6 +2502,62 @@ def _marketplace_base(path: Path) -> Path:
     return path.parent
 
 
+def _require_source_string(
+    report: ArtifactReport, path: Path, value: Any, label: str
+) -> None:
+    if not isinstance(value, str) or not value.strip():
+        report.error("required-field", path, f"{label} must be a non-empty string")
+
+
+def _optional_source_string(
+    report: ArtifactReport, path: Path, value: Any, label: str
+) -> None:
+    if value is not None and (not isinstance(value, str) or not value.strip()):
+        report.error("type", path, f"{label} must be a non-empty string")
+
+
+def _marketplace_local_root(
+    report: ArtifactReport,
+    path: Path,
+    base: Path,
+    raw_path: Any,
+    plugin_name: str | None,
+    label: str,
+) -> None:
+    plugin_root = _contract_path(
+        report,
+        path,
+        base,
+        raw_path,
+        label,
+        expected_kind="directory",
+        require_exists=False,
+    )
+    if plugin_root is None:
+        return
+    if not plugin_root.exists():
+        report.error(
+            "missing-local-plugin",
+            plugin_root,
+            "local marketplace plugin source does not exist",
+        )
+        return
+    plugin_manifest = plugin_root / ".codex-plugin" / "plugin.json"
+    if plugin_manifest.is_file():
+        manifest = _load_json(report, plugin_manifest)
+        if manifest is not None and manifest.get("name") != plugin_name:
+            report.error(
+                "name-mismatch",
+                plugin_manifest,
+                "marketplace entry name must match plugin.json name",
+            )
+    else:
+        report.error("missing-reference", plugin_root, "local plugin lacks plugin.json")
+    plugin_report = _validate_plugin_root(plugin_root, budget=report.budget)
+    report.errors.extend(plugin_report.errors)
+    report.warnings.extend(plugin_report.warnings)
+
+
 def _validate_marketplace_file(path: Path, *, budget: ScanBudget | None = None) -> ArtifactReport:
     report = ArtifactReport("marketplace", path, budget=budget or ScanBudget())
     if not _preflight_path(report, path, directory=False):
@@ -2543,43 +2600,76 @@ def _validate_marketplace_file(path: Path, *, budget: ScanBudget | None = None) 
                 )
             names.add(plugin_name)
         source = entry.get("source")
-        plugin_root: Path | None = None
-        if not isinstance(source, dict):
-            report.error("required-field", path, f"{label}.source must be an object")
-        else:
-            _unknown_keys(report, path, source, {"source", "path"}, f"{label}.source")
-            if source.get("source") != "local":
-                report.error("source", path, f"{label}.source.source must be `local`")
-            plugin_root = _contract_path(
-                report,
+        if isinstance(source, str):
+            # Bare-string shorthand is a local path.
+            _marketplace_local_root(report, path, base, source, plugin_name, f"{label}.source")
+        elif not isinstance(source, dict):
+            report.error(
+                "required-field",
                 path,
-                base,
-                source.get("path"),
-                f"{label}.source.path",
-                expected_kind="directory",
-                require_exists=False,
+                f"{label}.source must be an object or a local-path string",
             )
-            if plugin_root is not None and not plugin_root.exists():
-                report.error(
-                    "missing-local-plugin",
-                    plugin_root,
-                    "local marketplace plugin source does not exist",
+        else:
+            source_type = source.get("source")
+            if source_type == "local":
+                _unknown_keys(report, path, source, {"source", "path"}, f"{label}.source")
+                _marketplace_local_root(
+                    report, path, base, source.get("path"), plugin_name, f"{label}.source.path"
                 )
-            elif plugin_root is not None:
-                plugin_manifest = plugin_root / ".codex-plugin" / "plugin.json"
-                if plugin_manifest.is_file():
-                    manifest = _load_json(report, plugin_manifest)
-                    if manifest is not None and manifest.get("name") != plugin_name:
-                        report.error(
-                            "name-mismatch",
-                            plugin_manifest,
-                            "marketplace entry name must match plugin.json name",
-                        )
-                else:
-                    report.error("missing-reference", plugin_root, "local plugin lacks plugin.json")
-                plugin_report = _validate_plugin_root(plugin_root, budget=report.budget)
-                report.errors.extend(plugin_report.errors)
-                report.warnings.extend(plugin_report.warnings)
+            elif source_type == "url":
+                _unknown_keys(
+                    report,
+                    path,
+                    source,
+                    {"source", "url", "path", "ref", "sha"},
+                    f"{label}.source",
+                )
+                _require_source_string(report, path, source.get("url"), f"{label}.source.url")
+                for optional in ("path", "ref", "sha"):
+                    _optional_source_string(
+                        report, path, source.get(optional), f"{label}.source.{optional}"
+                    )
+            elif source_type == "git-subdir":
+                _unknown_keys(
+                    report,
+                    path,
+                    source,
+                    {"source", "url", "path", "ref", "sha"},
+                    f"{label}.source",
+                )
+                _require_source_string(report, path, source.get("url"), f"{label}.source.url")
+                _require_source_string(report, path, source.get("path"), f"{label}.source.path")
+                for optional in ("ref", "sha"):
+                    _optional_source_string(
+                        report, path, source.get(optional), f"{label}.source.{optional}"
+                    )
+            elif source_type == "npm":
+                _unknown_keys(
+                    report,
+                    path,
+                    source,
+                    {"source", "package", "version", "registry"},
+                    f"{label}.source",
+                )
+                _require_source_string(
+                    report, path, source.get("package"), f"{label}.source.package"
+                )
+                _optional_source_string(
+                    report, path, source.get("version"), f"{label}.source.version"
+                )
+                registry = source.get("registry")
+                if registry is not None and (
+                    not isinstance(registry, str) or not registry.startswith("https://")
+                ):
+                    report.error(
+                        "source", path, f"{label}.source.registry must be an https:// URL"
+                    )
+            else:
+                report.error(
+                    "source",
+                    path,
+                    f"{label}.source.source must be one of local, url, git-subdir, npm",
+                )
         policy = entry.get("policy")
         if not isinstance(policy, dict):
             report.error("required-field", path, f"{label}.policy must be an object")
@@ -2824,6 +2914,115 @@ def _validate_config_file(path: Path, *, budget: ScanBudget | None = None) -> Ar
     return report
 
 
+REQUIREMENTS_TOP_LEVEL_KEYS = {
+    "allowed_approval_policies",
+    "allowed_approvals_reviewers",
+    "allowed_sandbox_modes",
+    "allowed_permission_profiles",
+    "default_permissions",
+    "remote_sandbox_config",
+    "allowed_web_search_modes",
+    "allow_managed_hooks_only",
+    "allow_appshots",
+    "allow_remote_control",
+    "computer_use",
+    "windows",
+    "features",
+    "hooks",
+    "mcp_servers",
+    "plugins",
+    "marketplaces",
+    "apps",
+    "rules",
+    "enforce_residency",
+    "network",
+    "permissions",
+    "models",
+    "guardian_policy_config",
+}
+_BUILTIN_PERMISSION_PROFILES = frozenset({":read-only", ":workspace", ":danger-full-access"})
+
+
+def _validate_requirements_file(
+    path: Path, *, budget: ScanBudget | None = None
+) -> ArtifactReport:
+    report = ArtifactReport("requirements", path, budget=budget or ScanBudget())
+    if not _preflight_path(report, path, directory=False):
+        return report
+    payload, text = _load_toml(report, path)
+    if text is None:
+        return report
+    # Reuse the shared safety gates: deprecated keys, legacy profile selectors, the
+    # mixed sandbox/permission surface, default_permissions built-in check, sandbox_mode,
+    # features booleans, reasoning efforts, and mcp_servers shape.
+    _config_key_checks(report, path, payload, text)
+    if payload is None:
+        return report
+    _unknown_keys(
+        report,
+        path,
+        payload,
+        REQUIREMENTS_TOP_LEVEL_KEYS,
+        "Codex 0.144.6 requirements top-level",
+    )
+    defined_profiles: set[str] = set()
+    permissions = payload.get("permissions")
+    if isinstance(permissions, dict):
+        defined_profiles = {key for key in permissions if isinstance(key, str)}
+    allowed = payload.get("allowed_permission_profiles")
+    if allowed is None:
+        return report
+    if not isinstance(allowed, dict) or not allowed:
+        report.error(
+            "permission-profile",
+            path,
+            "allowed_permission_profiles must be a non-empty table of profile name to boolean",
+        )
+        return report
+    for profile, enabled in allowed.items():
+        if not isinstance(profile, str) or not profile.strip():
+            report.error(
+                "permission-profile",
+                path,
+                "allowed_permission_profiles keys must be non-empty profile names",
+            )
+            continue
+        if not isinstance(enabled, bool):
+            report.error(
+                "permission-profile",
+                path,
+                f"allowed_permission_profiles entry `{profile}` must map to a boolean",
+            )
+        if profile.startswith(":"):
+            if profile not in _BUILTIN_PERMISSION_PROFILES:
+                report.error(
+                    "permission-profile",
+                    path,
+                    f"allowed_permission_profiles entry `{profile}` is an unknown built-in profile",
+                )
+        elif profile not in defined_profiles:
+            report.error(
+                "permission-profile",
+                path,
+                f"allowed_permission_profiles entry `{profile}` is not defined under [permissions.{profile}]",
+            )
+    default_permissions = payload.get("default_permissions")
+    if isinstance(default_permissions, str) and default_permissions.strip():
+        if default_permissions not in allowed:
+            report.error(
+                "permission-profile",
+                path,
+                "default_permissions must be one of the allowed_permission_profiles entries",
+            )
+    elif default_permissions is None and not {":read-only", ":workspace"} <= set(allowed):
+        report.error(
+            "permission-profile",
+            path,
+            "allowed_permission_profiles must permit both :read-only and :workspace when default_permissions is unset",
+        )
+    return report
+
+
 def _validate_instructions_file(path: Path, *, budget: ScanBudget | None = None) -> ArtifactReport:
     report = ArtifactReport("instructions", path, budget=budget or ScanBudget())
     if not _preflight_path(report, path, directory=False):
@@ -3028,6 +3227,7 @@ def _resolve_specific_path(kind: str, raw_path: Path) -> Path:
         "app": ".app.json",
         "config": "config.toml",
         "instructions": "AGENTS.md",
+        "requirements": "requirements.toml",
     }
     filename = filename_by_kind.get(kind)
     if filename is not None and path.is_dir():
@@ -3050,6 +3250,7 @@ VALIDATORS: dict[str, Callable[..., ArtifactReport]] = {
     "config": _validate_config_file,
     "instructions": _validate_instructions_file,
     "rule": _validate_rule_file,
+    "requirements": _validate_requirements_file,
 }
 
 
@@ -3059,7 +3260,7 @@ def _artifact_candidate(path: Path) -> tuple[str, Path] | None:
     if path.name == "plugin.json" and path.parent.name == ".codex-plugin":
         return "plugin", path.parent.parent
     if (
-        path.name == "marketplace.json"
+        path.name in {"marketplace.json", "api_marketplace.json"}
         and path.parent.name == "plugins"
         and path.parent.parent.name == ".agents"
     ):
@@ -3074,6 +3275,8 @@ def _artifact_candidate(path: Path) -> tuple[str, Path] | None:
         return "instructions", path
     if path.suffix == ".rules":
         return "rule", path
+    if path.name == "requirements.toml":
+        return "requirements", path
     if path.name == "config.toml" or path.name.endswith(".config.toml"):
         return "config", path
     if path.suffix == ".toml" and "agents" in path.parts:
