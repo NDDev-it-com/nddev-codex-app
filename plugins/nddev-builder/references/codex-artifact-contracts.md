@@ -54,3 +54,14 @@ legacy top-level `mcpServers` wrapper. Keep the documentation-correct direct
 map as the generator default, record the validator discrepancy when it occurs,
 and require pinned-runtime discovery rather than rewriting the artifact solely
 to satisfy the stale validator.
+
+Current capability toggles are centralized in the top-level `[features]` table
+(and a few dedicated tables it fronts). Rather than freeze the fast-moving flag
+list here, treat `scripts/check_codex_artifact.py` (which pins the exact
+top-level config surface) and the built-in `$openai-docs` skill as the
+authority for names and defaults. Powerful surfaces an author reaches this way
+include Code Mode, agent memories, tool search, guardian approvals,
+browser/computer use, and multi-agent orchestration; enable only what the task
+needs and prove each at runtime. One stable consequence: web search is on by
+default, so the `features.web_search*` toggles are legacy — the config checker
+rejects them, mirroring Codex's own deprecation notice.

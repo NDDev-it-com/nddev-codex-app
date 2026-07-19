@@ -12,8 +12,8 @@ The artifact contracts used by every workflow are documented in
 
 ## Skill inventory
 
-The plugin exposes exactly 28 skills: eleven creator/checker pairs, one
-cross-artifact reviewer, and five workflow/lifecycle skills.
+The plugin exposes exactly 29 skills: eleven creator/checker pairs, one
+cross-artifact reviewer, and six workflow/lifecycle skills.
 
 | Artifact | Creator | Checker |
 | --- | --- | --- |
@@ -30,11 +30,12 @@ cross-artifact reviewer, and five workflow/lifecycle skills.
 | Managed requirements | `codex-requirements-creator` | `codex-requirements-checker` |
 | Cross-artifact review | `codex-artifact-reviewer` | — |
 
-The five workflow/lifecycle skills orchestrate the artifacts above into a
+The six workflow/lifecycle skills orchestrate the artifacts above into a
 complete build cycle:
 
 | Workflow | Skill |
 | --- | --- |
+| Guided first run | `codex-onboarding` |
 | Orientation and routing | `codex-builder-orientation` |
 | Scaffold a whole plugin | `codex-plugin-scaffolder` |
 | Local dev-mode test loop | `codex-plugin-devtest` |

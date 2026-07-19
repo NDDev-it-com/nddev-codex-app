@@ -2,6 +2,30 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.12] - 2026-07-19
+
+### Added
+
+- New `codex-onboarding` skill: a guided first run that routes a newcomer from
+  zero to a checked Codex artifact through the add-one, build-a-plugin, and
+  marketplace paths. `codex-builder-orientation` now points newcomers to it. The
+  builder plugin exposes 29 skills.
+
+### Fixed
+
+- The `config` checker now accepts the full Codex 0.144.6 reasoning-effort ladder
+  for `model_reasoning_effort` and `plan_mode_reasoning_effort`. `max` and `ultra`
+  (and `none`) map to the same `ReasoningEffort` type as an agent role's effort,
+  but a stricter config-only allowlist rejected them as false positives.
+
+### Changed
+
+- The contracts reference notes that current capability toggles are centralized
+  in `[features]` and points at the checker and `$openai-docs` as the authority,
+  rather than freezing the fast-moving flag list.
+- The builder plugin advances to 0.3.7 so an in-place `install-builder`
+  re-materializes the cache.
+
 ## [0.3.11] - 2026-07-19
 
 ### Fixed
