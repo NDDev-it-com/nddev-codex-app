@@ -2,6 +2,36 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.10] - 2026-07-19
+
+### Fixed
+
+- The `requirements` checker now matches the exact Codex 0.144.6
+  `ConfigRequirementsToml` surface, correcting fail-closed defects that rejected
+  valid managed files. The managed key set uses `experimental_network` (not
+  `network`) and accepts the `feature_requirements` alias for `features`;
+  `allowed_permission_profiles` entries that are not built-ins are no longer
+  rejected (they may be defined in a lower config layer); and `mcp_servers`,
+  `features`, and other managed values are no longer validated with config.toml
+  shapes. Permission-profile validation mirrors Codex exactly: `default_permissions`
+  requires `allowed_permission_profiles`, the effective default must map to `true`,
+  and the implicit `:workspace` default requires both `:workspace` and `:read-only`
+  to be allowed.
+
+### Added
+
+- The `marketplace` checker discovers `.claude-plugin/marketplace.json` (the third
+  manifest filename Codex recognizes) alongside `marketplace.json` and
+  `api_marketplace.json`.
+- `create_codex_artifact.py marketplace` gains `--source-type`
+  (`local`/`url`/`git-subdir`/`npm`) with matching source fields, so the creator
+  scaffolds every plugin source the checker accepts.
+
+### Changed
+
+- The builder plugin advances to 0.3.5 so an in-place `install-builder`
+  re-materializes the cache after the checker and generator change.
+
 ## [0.3.9] - 2026-07-19
 
 ### Added

@@ -2927,7 +2927,9 @@ REQUIREMENTS_TOP_LEVEL_KEYS = {
     "allow_remote_control",
     "computer_use",
     "windows",
+    # `features` is the primary key; `feature_requirements` is its serde alias.
     "features",
+    "feature_requirements",
     "hooks",
     "mcp_servers",
     "plugins",
@@ -2935,7 +2937,8 @@ REQUIREMENTS_TOP_LEVEL_KEYS = {
     "apps",
     "rules",
     "enforce_residency",
-    "network",
+    # The struct field is `network` but its serde rename is `experimental_network`.
+    "experimental_network",
     "permissions",
     "models",
     "guardian_policy_config",
@@ -2949,15 +2952,15 @@ def _validate_requirements_file(
     report = ArtifactReport("requirements", path, budget=budget or ScanBudget())
     if not _preflight_path(report, path, directory=False):
         return report
-    payload, text = _load_toml(report, path)
-    if text is None:
-        return report
-    # Reuse the shared safety gates: deprecated keys, legacy profile selectors, the
-    # mixed sandbox/permission surface, default_permissions built-in check, sandbox_mode,
-    # features booleans, reasoning efforts, and mcp_servers shape.
-    _config_key_checks(report, path, payload, text)
+    payload, _text = _load_toml(report, path)
     if payload is None:
+        # _load_toml already emitted a fail-closed error (unreadable, Python 3.10
+        # without tomllib, invalid TOML, or a non-table root).
         return report
+    # Do NOT reuse _config_key_checks here: requirements.toml has its own key surface
+    # (REQUIREMENTS_TOP_LEVEL_KEYS), and its `mcp_servers`/`features` values use managed
+    # requirement shapes (McpServerRequirement, a feature->bool map) distinct from
+    # config.toml, so config-shape validation would reject valid managed files.
     _unknown_keys(
         report,
         path,
@@ -2965,12 +2968,17 @@ def _validate_requirements_file(
         REQUIREMENTS_TOP_LEVEL_KEYS,
         "Codex 0.144.6 requirements top-level",
     )
-    defined_profiles: set[str] = set()
-    permissions = payload.get("permissions")
-    if isinstance(permissions, dict):
-        defined_profiles = {key for key in permissions if isinstance(key, str)}
     allowed = payload.get("allowed_permission_profiles")
+    default_permissions = payload.get("default_permissions")
     if allowed is None:
+        # Codex requires allowed_permission_profiles whenever default_permissions is set.
+        if default_permissions is not None:
+            report.error(
+                "permission-profile",
+                path,
+                "default_permissions requires allowed_permission_profiles",
+            )
+        _requirements_flag_checks(report, path, payload)
         return report
     if not isinstance(allowed, dict) or not allowed:
         report.error(
@@ -2978,7 +2986,12 @@ def _validate_requirements_file(
             path,
             "allowed_permission_profiles must be a non-empty table of profile name to boolean",
         )
+        _requirements_flag_checks(report, path, payload)
         return report
+    # A profile counts as allowed only when present AND mapped to true (Codex
+    # `is_permission_allowed`). Non-built-in profiles may be defined in a lower
+    # config layer, so a single-file static check must not reject them.
+    allowed_true: set[str] = set()
     for profile, enabled in allowed.items():
         if not isinstance(profile, str) or not profile.strip():
             report.error(
@@ -2993,34 +3006,47 @@ def _validate_requirements_file(
                 path,
                 f"allowed_permission_profiles entry `{profile}` must map to a boolean",
             )
-        if profile.startswith(":"):
-            if profile not in _BUILTIN_PERMISSION_PROFILES:
-                report.error(
-                    "permission-profile",
-                    path,
-                    f"allowed_permission_profiles entry `{profile}` is an unknown built-in profile",
-                )
-        elif profile not in defined_profiles:
+            continue
+        if profile.startswith(":") and profile not in _BUILTIN_PERMISSION_PROFILES:
             report.error(
                 "permission-profile",
                 path,
-                f"allowed_permission_profiles entry `{profile}` is not defined under [permissions.{profile}]",
+                f"allowed_permission_profiles entry `{profile}` is an unknown built-in profile",
             )
-    default_permissions = payload.get("default_permissions")
+        if enabled:
+            allowed_true.add(profile)
+    # Resolve the effective default as Codex does: the explicit default, else the
+    # implicit `:workspace` only when both `:workspace` and `:read-only` are allowed.
     if isinstance(default_permissions, str) and default_permissions.strip():
-        if default_permissions not in allowed:
-            report.error(
-                "permission-profile",
-                path,
-                "default_permissions must be one of the allowed_permission_profiles entries",
-            )
-    elif default_permissions is None and not {":read-only", ":workspace"} <= set(allowed):
+        effective_default: str | None = default_permissions
+    elif default_permissions is None and {":workspace", ":read-only"} <= allowed_true:
+        effective_default = ":workspace"
+    else:
+        effective_default = None
+    if effective_default is None:
         report.error(
             "permission-profile",
             path,
-            "allowed_permission_profiles must permit both :read-only and :workspace when default_permissions is unset",
+            "default_permissions must be set unless allowed_permission_profiles allows both :read-only and :workspace",
         )
+    elif effective_default not in allowed_true:
+        report.error(
+            "permission-profile",
+            path,
+            f"default_permissions `{effective_default}` must be allowed (set to true) by allowed_permission_profiles",
+        )
+    _requirements_flag_checks(report, path, payload)
     return report
+
+
+def _requirements_flag_checks(report: ArtifactReport, path: Path, payload: dict[str, Any]) -> None:
+    for bool_key in ("allow_managed_hooks_only", "allow_appshots", "allow_remote_control"):
+        value = payload.get(bool_key)
+        if value is not None and not isinstance(value, bool):
+            report.error("type", path, f"{bool_key} must be a boolean")
+    guardian = payload.get("guardian_policy_config")
+    if guardian is not None and (not isinstance(guardian, str) or not guardian.strip()):
+        report.error("type", path, "guardian_policy_config must be a non-empty string")
 
 
 def _validate_instructions_file(path: Path, *, budget: ScanBudget | None = None) -> ArtifactReport:
@@ -3264,6 +3290,8 @@ def _artifact_candidate(path: Path) -> tuple[str, Path] | None:
         and path.parent.name == "plugins"
         and path.parent.parent.name == ".agents"
     ):
+        return "marketplace", path
+    if path.name == "marketplace.json" and path.parent.name == ".claude-plugin":
         return "marketplace", path
     if path.name == "hooks.json":
         return "hook", path

@@ -69,9 +69,10 @@ python3 scripts/check_codex_artifact.py skill \
 
 Supported generator/checker kinds are `skill`, `plugin`, `marketplace`,
 `agent`, `hook`, `mcp`, `app`, `config`, `instructions`, `rule`, and
-`requirements`. The `marketplace` checker accepts `local`, `url`, `git-subdir`,
-and `npm` plugin sources and also discovers a sibling `api_marketplace.json`
-catalog. Run each
+`requirements`. The `marketplace` generator and checker both cover `local`,
+`url`, `git-subdir`, and `npm` plugin sources (use `--source-type`), and the
+checker discovers `marketplace.json`, `api_marketplace.json`, and
+`.claude-plugin/marketplace.json` catalogs. Run each
 script with `--help` before using kind-specific options such as `--app-id`,
 `--transport`, `--event`, or `--prefix`. Use `--json` when another tool needs a
 stable machine-readable result.
