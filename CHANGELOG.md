@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.11] - 2026-07-19
+
+### Fixed
+
+- The `marketplace` checker now resolves local plugin sources in a
+  `.claude-plugin/marketplace.json` catalog relative to the repository root (the
+  directory that contains `.claude-plugin/`), matching how Codex derives the
+  marketplace root. Previously such paths resolved one level too deep and a valid
+  local source was reported missing. `.agents/plugins/` catalogs are unchanged.
+- The builder plugin advances to 0.3.6 so an in-place `install-builder`
+  re-materializes the cache.
+
 ## [0.3.10] - 2026-07-19
 
 ### Fixed

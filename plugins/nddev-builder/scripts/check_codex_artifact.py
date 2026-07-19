@@ -2497,8 +2497,13 @@ def _validate_plugin_root(root: Path, *, budget: ScanBudget | None = None) -> Ar
 
 
 def _marketplace_base(path: Path) -> Path:
+    # Codex resolves local plugin paths relative to the marketplace root: the
+    # directory that contains the recognized manifest layout. Mirror that for each
+    # recognized filename so `./`-relative sources resolve the same way it does.
     if path.parent.name == "plugins" and path.parent.parent.name == ".agents":
         return path.parent.parent.parent
+    if path.parent.name == ".claude-plugin":
+        return path.parent.parent
     return path.parent
 
 
