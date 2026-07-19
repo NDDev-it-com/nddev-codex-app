@@ -1,7 +1,7 @@
 # NDDev Codex Setup Manager
 
 `nddev-codex-app` is a dependency-free manager for a caller-selected Codex
-home. Version `0.3.6` installs the exact tested official Codex CLI standalone
+home. Version `0.3.7` installs the exact tested official Codex CLI standalone
 release into that target and switches one of two complete NDDev configuration
 sets without deleting unrelated target state. The repository also publishes
 the independently installable `nddev-builder` Codex marketplace.

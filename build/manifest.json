@@ -5,7 +5,7 @@
     "location": "sibling .<target-name>.nddev-codex-backups",
     "slots": 10
   },
-  "build_version": "0.3.6",
+  "build_version": "0.3.7",
   "command_policy": {
     "json_supported": [
       "list",
@@ -82,7 +82,8 @@
     "profile_selection": "--profile nddev-builder",
     "install_command": "python3 cli-tools/nddev_codex.py install-builder --target <absolute-target> [--json]",
     "status_command": "python3 cli-tools/nddev_codex.py builder-status --target <absolute-target> [--json]",
-    "primary_config_restored_after_install": true,
+    "builder_enabled_in_base_config": true,
+    "setup_base_preserved_after_install": true,
     "runtime_owned_cache": true,
     "cache_validation": "bounded-exact-source-tree"
   },
