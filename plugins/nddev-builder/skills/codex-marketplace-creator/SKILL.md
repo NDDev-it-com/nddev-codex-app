@@ -19,7 +19,7 @@ Create a small, auditable catalog that points to canonical plugin sources withou
        python3 ../../scripts/create_codex_artifact.py marketplace --output . --name example-marketplace --description "Curated Codex plugins for this repository" --plugin-name example-plugin
 
 4. Add stable plugin identifiers and resolvable sources. Keep each category and policy aligned with actual behavior.
-5. Prefer immutable remote references for releases and local relative sources for repository development.
+5. Select the source with `--source-type`: `local` for repository development, or `url`, `git-subdir`, or `npm` for remote releases. Prefer immutable remote references (`ref`/`sha` or a pinned `npm` version) for releases.
 6. Do not embed credentials, environment values, or duplicate plugin manifests.
 7. Validate the catalog and all reachable local plugins:
 

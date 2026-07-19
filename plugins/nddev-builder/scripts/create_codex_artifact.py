@@ -916,13 +916,47 @@ def validate_plugin_path(raw_path: str) -> str:
     return raw_path.rstrip("/")
 
 
+def _marketplace_source(args: argparse.Namespace, plugin_name: str) -> dict[str, str]:
+    source_type = args.source_type
+    if source_type == "local":
+        path = validate_plugin_path(args.plugin_path or f"./plugins/{plugin_name}")
+        return {"source": "local", "path": path}
+    if source_type == "url":
+        if not args.source_url:
+            fail("--source-type url requires --source-url")
+        source: dict[str, str] = {"source": "url", "url": args.source_url}
+        if args.source_subdir:
+            source["path"] = args.source_subdir
+        if args.source_ref:
+            source["ref"] = args.source_ref
+        return source
+    if source_type == "git-subdir":
+        if not args.source_url or not args.source_subdir:
+            fail("--source-type git-subdir requires --source-url and --source-subdir")
+        source = {"source": "git-subdir", "url": args.source_url, "path": args.source_subdir}
+        if args.source_ref:
+            source["ref"] = args.source_ref
+        return source
+    if source_type == "npm":
+        if not args.npm_package:
+            fail("--source-type npm requires --npm-package")
+        source = {"source": "npm", "package": args.npm_package}
+        if args.npm_version:
+            source["version"] = args.npm_version
+        if args.npm_registry:
+            if not args.npm_registry.startswith("https://"):
+                fail("--npm-registry must be an https:// URL")
+            source["registry"] = args.npm_registry
+        return source
+    fail(f"unknown --source-type `{source_type}`")
+
+
 def create_marketplace(
     args: argparse.Namespace, output: Path, name: str, description: str
 ) -> CreationPlan:
     if not args.plugin_name:
         fail("marketplace creation requires --plugin-name")
     plugin_name = validate_name(args.plugin_name, "--plugin-name")
-    plugin_path = validate_plugin_path(args.plugin_path or f"./plugins/{plugin_name}")
     category = validate_required_line(args.category, "--category")
     manifest_path = output / ".agents" / "plugins" / "marketplace.json"
     marketplace = {
@@ -931,7 +965,7 @@ def create_marketplace(
         "plugins": [
             {
                 "name": plugin_name,
-                "source": {"source": "local", "path": plugin_path},
+                "source": _marketplace_source(args, plugin_name),
                 "policy": {
                     "installation": args.install_policy,
                     "authentication": args.auth_policy,
@@ -1221,6 +1255,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--category", default="Developer Tools")
     parser.add_argument("--plugin-name")
     parser.add_argument("--plugin-path")
+    parser.add_argument(
+        "--source-type", choices=("local", "url", "git-subdir", "npm"), default="local"
+    )
+    parser.add_argument("--source-url")
+    parser.add_argument("--source-subdir")
+    parser.add_argument("--source-ref")
+    parser.add_argument("--npm-package")
+    parser.add_argument("--npm-version")
+    parser.add_argument("--npm-registry")
     parser.add_argument(
         "--install-policy",
         choices=("AVAILABLE", "INSTALLED_BY_DEFAULT", "NOT_AVAILABLE"),
