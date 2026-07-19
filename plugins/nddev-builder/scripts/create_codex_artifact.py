@@ -1161,6 +1161,34 @@ def create_rule(
     return CreationPlan(files=(_planned_text(target, content),))
 
 
+def create_requirements(
+    args: argparse.Namespace, output: Path, name: str, description: str
+) -> CreationPlan:
+    target = output / "requirements.toml"
+    selected = list(args.allowed_permission_profile)
+    for profile in selected:
+        if not profile or any(character.isspace() for character in profile):
+            fail("--allowed-permission-profile values must be non-empty and whitespace-free")
+    default = args.default_permissions
+    if default is not None and (not default or any(character.isspace() for character in default)):
+        fail("--default-permissions must be a non-empty value without whitespace")
+    if not selected:
+        # A managed layer with no explicit default must permit both :read-only and
+        # :workspace so a lower layer always has a valid default to fall back to.
+        selected = [":read-only", ":workspace"]
+    if default is not None and default not in selected:
+        selected.append(default)
+    lines: list[str] = []
+    if default is not None:
+        lines.append(f"default_permissions = {toml_string(default)}")
+        lines.append("")
+    lines.append("[allowed_permission_profiles]")
+    for profile in selected:
+        lines.append(f"{toml_string(profile)} = true")
+    content = "\n".join(lines) + "\n"
+    return CreationPlan(files=(_planned_text(target, content),))
+
+
 CREATORS = {
     "skill": create_skill,
     "plugin": create_plugin,
@@ -1172,6 +1200,7 @@ CREATORS = {
     "config": create_config,
     "instructions": create_instructions,
     "rule": create_rule,
+    "requirements": create_requirements,
 }
 
 
@@ -1216,6 +1245,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--permission-profile", choices=tuple(PERMISSION_PROFILES), default="read-only"
     )
+    parser.add_argument("--allowed-permission-profile", action="append", default=[])
+    parser.add_argument("--default-permissions")
     parser.add_argument("--prefix", nargs="+")
     parser.add_argument("--decision", choices=("allow", "prompt", "forbidden"), default="prompt")
     return parser

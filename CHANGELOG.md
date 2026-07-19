@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.9] - 2026-07-19
+
+### Added
+
+- nddev-builder gains an eleventh artifact family, managed `requirements.toml`,
+  with `codex-requirements-creator` and `codex-requirements-checker` skills plus
+  matching generator/checker support. The checker validates the managed layer's
+  supported top-level keys, the `allowed_permission_profiles` table, and that a
+  lower config layer always retains a valid default permission profile.
+- The `marketplace` checker now accepts `local`, `url`, `git-subdir`, and `npm`
+  plugin sources (previously local-only) and discovers a sibling
+  `api_marketplace.json` catalog, matching the Codex 0.144.6 marketplace schema.
+- The builder plugin advances to 0.3.4 (28 skills) so an in-place
+  `install-builder` re-materializes the cache.
+
 ## [0.3.8] - 2026-07-19
 
 ### Added

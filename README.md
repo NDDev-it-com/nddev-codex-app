@@ -156,10 +156,11 @@ and setup removal; a setup apply or switch drops the base-config enable, and
 
 The marketplace exposes skills for creating and checking every supported
 builder artifact family: skills, plugins, marketplaces, custom-agent TOML,
-hooks, MCP configuration, ChatGPT app mappings, Codex config, `AGENTS.md`, and
-execpolicy rules, plus workflow skills that orient and route, scaffold a whole
-plugin from intent, run the local dev-mode test loop, publish, and review a
-bundle for release. It intentionally ships no copied slash-command files and no
+hooks, MCP configuration, ChatGPT app mappings, Codex config, `AGENTS.md`,
+execpolicy rules, and managed `requirements.toml`, plus workflow skills that
+orient and route, scaffold a whole plugin from intent, run the local dev-mode
+test loop, publish, and review a bundle for release. The marketplace checker
+accepts `local`, `url`, `git-subdir`, and `npm` plugin sources. It intentionally ships no copied slash-command files and no
 plugin-bundled custom agents because neither is a native Codex plugin surface.
 See `plugins/nddev-builder/README.md` for its exact inventory and checker use.
 

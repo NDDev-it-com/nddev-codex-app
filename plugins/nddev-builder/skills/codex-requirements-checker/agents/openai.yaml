@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Requirements Checker"
+  short_description: "Check a managed Codex requirements.toml policy layer"
+  default_prompt: "Use $codex-requirements-checker to validate this managed requirements.toml layer."
