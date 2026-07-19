@@ -136,6 +136,15 @@ python3 cli-tools/nddev_codex.py launch \
 A plain `launch` loads the builder by default; append `-- --profile nddev-builder`
 only when you want to activate it explicitly through the profile instead.
 
+`install-builder` and `launch` require the target to already be the current
+catalog setup. A target that was applied by an older manager build carries a
+stale `NDDEV-CODEX-SETUP.json` stamp and fails closed with `managed target is
+not the current canonical catalog setup; run apply --setup <id> before launch`.
+Re-run `apply --setup <id>` first: it re-stamps the setup to the current catalog
+and archives the prior managed state to a numbered backup slot -- which also
+drops the co-owned builder enable and any user `[mcp_servers.*]` entries -- after
+which `install-builder` restores the enable and you re-add any user MCP servers.
+
 `install-builder` invokes the target-owned pinned Codex CLI's official
 `plugin marketplace add` and `plugin add` commands with bounded output and a
 timeout. When a target is under the platform temporary root, it accepts only

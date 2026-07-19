@@ -26,6 +26,14 @@ All notable changes to this project are documented here.
 - The builder plugin advances to 0.3.7 so an in-place `install-builder`
   re-materializes the cache.
 
+### Documentation
+
+- The README "Install NDDev Builder" section now documents the current-catalog
+  precondition: `install-builder`/`launch` fail closed on a target whose setup
+  was applied by an older manager build, and the fix is to re-run
+  `apply --setup <id>` (which re-stamps and archives the old managed state to a
+  numbered backup) before `install-builder`, then re-add any user MCP servers.
+
 ## [0.3.11] - 2026-07-19
 
 ### Fixed
