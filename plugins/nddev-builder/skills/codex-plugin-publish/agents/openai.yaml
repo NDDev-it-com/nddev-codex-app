@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Plugin Publish"
+  short_description: "Version, catalog, and publish a Codex plugin"
+  default_prompt: "Use $codex-plugin-publish to version, catalog, and publish a plugin for distribution."

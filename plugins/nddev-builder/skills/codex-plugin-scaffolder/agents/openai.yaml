@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Plugin Scaffolder"
+  short_description: "Scaffold a whole Codex plugin from intent"
+  default_prompt: "Use $codex-plugin-scaffolder to compose and validate a complete native Codex plugin from intent."

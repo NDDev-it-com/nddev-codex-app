@@ -1,7 +1,7 @@
 # NDDev Codex Setup Manager
 
 `nddev-codex-app` is a dependency-free manager for a caller-selected Codex
-home. Version `0.3.7` installs the exact tested official Codex CLI standalone
+home. Version `0.3.8` installs the exact tested official Codex CLI standalone
 release into that target and switches one of two complete NDDev configuration
 sets without deleting unrelated target state. The repository also publishes
 the independently installable `nddev-builder` Codex marketplace.
@@ -157,7 +157,9 @@ and setup removal; a setup apply or switch drops the base-config enable, and
 The marketplace exposes skills for creating and checking every supported
 builder artifact family: skills, plugins, marketplaces, custom-agent TOML,
 hooks, MCP configuration, ChatGPT app mappings, Codex config, `AGENTS.md`, and
-execpolicy rules. It intentionally ships no copied slash-command files and no
+execpolicy rules, plus workflow skills that orient and route, scaffold a whole
+plugin from intent, run the local dev-mode test loop, publish, and review a
+bundle for release. It intentionally ships no copied slash-command files and no
 plugin-bundled custom agents because neither is a native Codex plugin surface.
 See `plugins/nddev-builder/README.md` for its exact inventory and checker use.
 

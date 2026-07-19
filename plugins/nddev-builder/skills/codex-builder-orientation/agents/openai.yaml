@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Builder Orientation"
+  short_description: "Index and route the Codex builder toolkit"
+  default_prompt: "Use $codex-builder-orientation to find the right Codex builder skill for a task."

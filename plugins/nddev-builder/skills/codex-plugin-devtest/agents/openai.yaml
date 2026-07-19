@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Plugin Devtest"
+  short_description: "Run a plugin's local dev-mode test loop"
+  default_prompt: "Use $codex-plugin-devtest to install and iterate on a plugin locally in developer mode."

@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.8] - 2026-07-19
+
+### Added
+
+- nddev-builder gains five workflow/lifecycle skills that turn the per-artifact
+  creator/checker toolkit into a complete plugin/marketplace build cycle:
+  `codex-builder-orientation` (index and routing), `codex-plugin-scaffolder`
+  (compose a whole plugin from intent), `codex-plugin-devtest` (local dev-mode
+  install/reinstall test loop), `codex-plugin-publish` (version, catalog, and
+  publish), and `codex-release-review` (whole-bundle release-readiness). The
+  builder plugin advances to 0.3.3 so an in-place `install-builder`
+  re-materializes the cache.
+
 ## [0.3.7] - 2026-07-19
 
 ### Changed

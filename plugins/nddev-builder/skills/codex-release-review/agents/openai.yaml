@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Release Review"
+  short_description: "Release-readiness audit of a whole Codex bundle"
+  default_prompt: "Use $codex-release-review to audit a complete plugin and marketplace bundle for release and return PASS or FAIL."

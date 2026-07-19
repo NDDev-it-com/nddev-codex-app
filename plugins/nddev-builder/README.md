@@ -12,7 +12,8 @@ The artifact contracts used by every workflow are documented in
 
 ## Skill inventory
 
-The plugin exposes exactly 21 skills.
+The plugin exposes exactly 26 skills: ten creator/checker pairs, one
+cross-artifact reviewer, and five workflow/lifecycle skills.
 
 | Artifact | Creator | Checker |
 | --- | --- | --- |
@@ -27,6 +28,17 @@ The plugin exposes exactly 21 skills.
 | `AGENTS.md` instructions | `codex-instructions-creator` | `codex-instructions-checker` |
 | Execpolicy rule | `codex-rule-creator` | `codex-rule-checker` |
 | Cross-artifact review | `codex-artifact-reviewer` | — |
+
+The five workflow/lifecycle skills orchestrate the artifacts above into a
+complete build cycle:
+
+| Workflow | Skill |
+| --- | --- |
+| Orientation and routing | `codex-builder-orientation` |
+| Scaffold a whole plugin | `codex-plugin-scaffolder` |
+| Local dev-mode test loop | `codex-plugin-devtest` |
+| Version, catalog, and publish | `codex-plugin-publish` |
+| Whole-bundle release review | `codex-release-review` |
 
 Invoke a workflow explicitly with its `$skill-name`, or describe the artifact
 task and let Codex route from the skill description. Creation skills generate
