@@ -117,7 +117,9 @@ closed.
 `nddev-builder` is a native Codex marketplace and plugin, not a third
 permission setup. The manager keeps reusable authoring capabilities independent
 from the selected `safe` or `full-auto` posture: Codex owns the plugin cache,
-while NDDev owns one deterministic `nddev-builder.config.toml` overlay.
+while NDDev enables the builder in the managed `config.toml` base (default-on
+for a plain `codex` launch) and also writes one deterministic
+`nddev-builder.config.toml` profile for explicit `--profile` selection.
 
 After applying a setup and installing the target-owned CLI, install and inspect
 the builder through the manager:
@@ -128,24 +130,29 @@ python3 cli-tools/nddev_codex.py install-builder \
 python3 cli-tools/nddev_codex.py builder-status \
   --target /absolute/path/to/codex-home --json
 python3 cli-tools/nddev_codex.py launch \
-  --target /absolute/path/to/codex-home -- \
-  --profile nddev-builder
+  --target /absolute/path/to/codex-home
 ```
+
+A plain `launch` loads the builder by default; append `-- --profile nddev-builder`
+only when you want to activate it explicitly through the profile instead.
 
 `install-builder` invokes the target-owned pinned Codex CLI's official
 `plugin marketplace add` and `plugin add` commands with bounded output and a
 timeout. When a target is under the platform temporary root, it accepts only
 the exact target-bound PATH-alias warning emitted by Codex and continues to
 reject every other diagnostic. It validates the complete bounded plugin cache
-tree against the source, including the exact manifest and version, extracts
-only the stable marketplace/plugin activation into the owner-only profile, and
-restores the managed `config.toml` byte-for-byte. Failure rolls back the
-configuration, profile, and the bounded versioned cache tree to its exact prior
-bytes and modes;
+tree against the source, including the exact manifest and version, then enables
+the builder in the managed `config.toml` base as a co-owned addition after the
+setup base -- so a plain `codex` launch loads it by default -- while also
+writing the stable marketplace/plugin activation into the owner-only
+`nddev-builder.config.toml` profile for explicit `--profile` selection. Failure
+rolls back the configuration, profile, and the bounded versioned cache tree to
+its exact prior bytes and modes;
 `AGENTS.md`, the setup stamp, unrelated plugins, and setup permissions remain
 unchanged.
 The profile and Codex-owned plugin cache are preserved across setup switches
-and setup removal.
+and setup removal; a setup apply or switch drops the base-config enable, and
+`install-builder` restores it without re-materializing the cache.
 
 The marketplace exposes skills for creating and checking every supported
 builder artifact family: skills, plugins, marketplaces, custom-agent TOML,

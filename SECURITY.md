@@ -67,11 +67,15 @@ days. These targets are best-effort.
   hook trust review, MCP authentication, or application security.
 - Marketplace registration and plugin installation are performed by the
   target-owned Codex CLI. Codex owns the bounded, exact-validated cache; the
-  manager owns a separate `nddev-builder.config.toml` activation profile and
-  restores the primary setup config byte-for-byte. A failed installation also
-  restores the bounded versioned cache tree without touching unrelated plugin
-  state. Both remain outside setup backup/restore and persist independently
-  across setup switching or removal.
+  manager enables the builder in the managed `config.toml` base as a co-owned
+  addition that preserves the setup base keys verbatim -- so a plain `codex`
+  launch loads it by default -- and also writes a separate
+  `nddev-builder.config.toml` activation profile for explicit `--profile`
+  selection. A failed installation restores the bounded versioned cache tree
+  without touching unrelated plugin state. The profile and cache remain outside
+  setup backup/restore and persist independently across setup switching or
+  removal; a setup apply or switch drops the base-config enable while they
+  survive, and `install-builder` restores it.
 - Public workflows use least privilege and immutable action/workflow pins.
 - Full behavioral, mutation, platform, and release validation remains in the
   private NDDev harness; no private fixtures or evidence are distributed here.
