@@ -9,6 +9,8 @@ Resolve every ../../scripts and ../../references path relative to this SKILL.md 
 
 The first skill to read for any nddev-builder task: index the artifact families, point at the schema and currency source of truth, and route to the skill that owns the work.
 
+New to the toolkit? Start with `$codex-onboarding` — a guided first run that walks a newcomer from zero to a checked artifact through the paths below.
+
 ## Workflow
 
 1. Name the artifact family the task targets. The generator and checker own the authoritative family list; read it rather than trusting any copy:

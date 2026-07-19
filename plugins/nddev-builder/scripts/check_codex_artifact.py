@@ -169,8 +169,11 @@ AGENT_FIELDS = {
 }
 
 MCP_APPROVAL_MODES = {"auto", "prompt", "writes", "approve"}
-CONFIG_REASONING_EFFORTS = {"minimal", "low", "medium", "high", "xhigh"}
-PLAN_REASONING_EFFORTS = CONFIG_REASONING_EFFORTS | {"none"}
+# The Codex 0.144.6 reasoning-effort ladder (protocol/src/openai_models.rs).
+# config.schema.json types `ReasoningEffort` as a non-empty string, and
+# `model_reasoning_effort`/`plan_mode_reasoning_effort` share the same type as an
+# agent role's effort, so accept the full known ladder for all three (a stricter
+# config set wrongly rejected `max`/`ultra`).
 AGENT_REASONING_EFFORTS = {
     "none",
     "minimal",
@@ -181,6 +184,8 @@ AGENT_REASONING_EFFORTS = {
     "max",
     "ultra",
 }
+CONFIG_REASONING_EFFORTS = AGENT_REASONING_EFFORTS
+PLAN_REASONING_EFFORTS = AGENT_REASONING_EFFORTS
 
 DEPRECATED_CONFIG_KEYS = {
     "codex_hooks",

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Onboarding"
+  short_description: "Guided first run from zero to a checked Codex artifact"
+  default_prompt: "Use $codex-onboarding for a guided first build with the Codex builder toolkit."
