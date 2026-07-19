@@ -2817,6 +2817,43 @@ def builder_profile_bytes() -> bytes:
     ).encode("utf-8")
 
 
+def builder_config_enabled(config: bytes, block: bytes) -> bool:
+    """Return True when the canonical builder block is present verbatim in the
+    config.toml bytes. The block is written contiguously and the Codex runtime
+    only appends after it, so a substring test is precise and tolerant of the
+    runtime's later ``[projects.*]`` additions."""
+    return block in config
+
+
+def config_with_builder_block(config: bytes, block: bytes) -> bytes:
+    """Return config guaranteed to contain the canonical builder block exactly
+    once, appended as a co-owned addition after the managed setup base.
+    Idempotent: if the block is already present the config is returned unchanged,
+    so a repeated enable never duplicates it."""
+    if builder_config_enabled(config, block):
+        return config
+    if not config.endswith(b"\n"):
+        config += b"\n"
+    return config + b"\n" + block
+
+
+def _builder_enabled_on_disk(target: Path, block: bytes) -> bool:
+    """Read the target's config.toml and report whether the canonical builder
+    block is enabled in it. Any read failure is treated as not-enabled
+    (conservative: it triggers a re-enable rather than masking a missing block)."""
+    try:
+        content, _ = read_target_file(
+            target,
+            "config.toml",
+            f"managed path {target / 'config.toml'}",
+            owner_only=False,
+            max_bytes=MANAGED_PAYLOAD_MAX_BYTES,
+        )
+    except (CodexSetupError, OSError, ValueError):
+        return False
+    return builder_config_enabled(content, block)
+
+
 def validate_builder_mutated_config(content: bytes, original: bytes) -> None:
     if not content.startswith(original) or not original.endswith(b"\n"):
         fail("official Codex plugin commands replaced the managed setup configuration")
@@ -2996,15 +3033,18 @@ def inspect_builder_profile(target: Path, expected: bytes) -> str:
 
 def builder_status(target: Path) -> dict[str, Any]:
     plugin_version, source_manifest = builder_source_contract()
+    expected_block = builder_profile_bytes()
     profile_state = "missing"
     cache_state = "missing"
+    config_enabled = False
     if ensure_target_directory(target, create=False):
-        profile_state = inspect_builder_profile(target, builder_profile_bytes())
+        profile_state = inspect_builder_profile(target, expected_block)
         cache_state = inspect_builder_cache(target, plugin_version, source_manifest)
+        config_enabled = _builder_enabled_on_disk(target, expected_block)
     installation = inspect_software_installation(target)
-    installed = profile_state == "current" and cache_state == "current"
+    installed = config_enabled and profile_state == "current" and cache_state == "current"
     state = "installed" if installed else "missing"
-    if not installed and (profile_state != "missing" or cache_state != "missing"):
+    if not installed and (config_enabled or profile_state != "missing" or cache_state != "missing"):
         state = "incomplete"
     return {
         "schema_version": 1,
@@ -3018,6 +3058,7 @@ def builder_status(target: Path) -> dict[str, Any]:
         "profile": BUILDER_PROFILE_NAME,
         "profile_state": profile_state,
         "cache_state": cache_state,
+        "config_enabled": config_enabled,
         "plugin_version": plugin_version,
         "codex_version": installation.version if installation is not None else None,
     }
@@ -3919,6 +3960,69 @@ def restore_builder_files(
             fail(f"builder transaction rollback content mismatch for {target / name}")
 
 
+def _enable_builder_in_config(
+    target: Path,
+    guard: TargetGuard,
+    expected_profile: bytes,
+    plugin_version: str,
+) -> dict[str, Any]:
+    """Add the canonical builder block to config.toml when the cache and profile
+    are already current but the base-config enable is absent -- e.g. a setup
+    apply or switch rewrote config.toml to the pure setup base. This restores the
+    default-on builder for a plain ``codex`` launch without re-materializing the
+    cache or invoking the official Codex plugin commands."""
+    original_snapshots, original_contents = capture_builder_files(target)
+    original_config = original_contents["config.toml"]
+    if original_config is None:
+        fail("managed config.toml disappeared from the builder transaction snapshot")
+    guard.expected_managed = {
+        name: original_snapshots[name] for name in (*MANAGED_FILES, STAMP_NAME)
+    }
+    guard.mutated_paths.clear()
+    guard.manager_results.clear()
+    try:
+        current_config = snapshot_target_file(target, "config.toml", owner_only=False)
+        desired: dict[str, bytes | None] = {
+            "config.toml": config_with_builder_block(original_config, expected_profile),
+        }
+        replace_managed_state(
+            target,
+            desired,
+            {"config.toml": current_config},
+            names=("config.toml",),
+        )
+        require_effective_clean_managed(target)
+        require_current_software(target)
+        if not _builder_enabled_on_disk(target, expected_profile):
+            fail("nddev-builder base-config enable postcondition failed")
+        assert_builder_paths_unchanged(
+            target,
+            original_snapshots,
+            ("AGENTS.md", STAMP_NAME, BUILDER_PROFILE_NAME),
+        )
+    except BaseException as operation_error:
+        try:
+            restore_builder_files(target, original_snapshots, original_contents)
+            require_effective_clean_managed(target)
+        except BaseException as rollback_error:
+            raise CodexSetupError(
+                "install-builder failed and configuration rollback also failed: "
+                f"{type(operation_error).__name__}: {operation_error}"
+            ) from rollback_error
+        raise
+    finally:
+        guard.mutated_paths.clear()
+        guard.manager_results.clear()
+    return {
+        "schema_version": 1,
+        "command": "install-builder",
+        "target": str(target),
+        "changed": True,
+        "plugin_version": plugin_version,
+        "profile": BUILDER_PROFILE_NAME,
+    }
+
+
 def install_builder(target: Path) -> dict[str, Any]:
     plugin_version, source_manifest = builder_source_contract()
     expected_profile = builder_profile_bytes()
@@ -3932,15 +4036,17 @@ def install_builder(target: Path) -> dict[str, Any]:
         if cache_state == "drifted":
             fail("current nddev-builder plugin cache manifest is invalid")
         if profile_state == "current" and cache_state == "current":
-            revalidate_guard(guard, allow_missing=False)
-            return {
-                "schema_version": 1,
-                "command": "install-builder",
-                "target": str(target),
-                "changed": False,
-                "plugin_version": plugin_version,
-                "profile": BUILDER_PROFILE_NAME,
-            }
+            if _builder_enabled_on_disk(target, expected_profile):
+                revalidate_guard(guard, allow_missing=False)
+                return {
+                    "schema_version": 1,
+                    "command": "install-builder",
+                    "target": str(target),
+                    "changed": False,
+                    "plugin_version": plugin_version,
+                    "profile": BUILDER_PROFILE_NAME,
+                }
+            return _enable_builder_in_config(target, guard, expected_profile, plugin_version)
 
         original_snapshots, original_contents = capture_builder_files(target)
         original_cache = capture_builder_cache_transaction(target, plugin_version)
@@ -3990,8 +4096,8 @@ def install_builder(target: Path) -> dict[str, Any]:
 
             current_config = snapshot_target_file(target, "config.toml", owner_only=False)
             current_profile = snapshot_target_file(target, BUILDER_PROFILE_NAME, owner_only=False)
-            desired = {
-                "config.toml": original_config,
+            desired: dict[str, bytes | None] = {
+                "config.toml": config_with_builder_block(original_config, expected_profile),
                 BUILDER_PROFILE_NAME: expected_profile,
             }
             expected = {
@@ -4010,6 +4116,8 @@ def install_builder(target: Path) -> dict[str, Any]:
                 fail("nddev-builder profile installation postcondition failed")
             if inspect_builder_cache(target, plugin_version, source_manifest) != "current":
                 fail("nddev-builder cache installation postcondition failed")
+            if not _builder_enabled_on_disk(target, expected_profile):
+                fail("nddev-builder base-config enable postcondition failed")
             assert_builder_paths_unchanged(
                 target,
                 original_snapshots,
@@ -4157,6 +4265,7 @@ def human_output(value: dict[str, Any]) -> str:
     if command == "builder-status":
         return (
             f"{value['state']}: {value['target']}; "
+            f"enabled={value['config_enabled']}; "
             f"profile={value['profile_state']}; cache={value['cache_state']}; "
             f"plugin={value['plugin_version']}"
         )

@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.7] - 2026-07-19
+
+### Changed
+
+- `install-builder` now enables the nddev-builder marketplace and plugin in the
+  managed `config.toml` base -- a co-owned addition after the setup base -- so a
+  plain `codex` launch loads the builder by default instead of only through
+  `--profile nddev-builder`. The isolated `nddev-builder.config.toml` profile is
+  still written for explicit `--profile` selection, and drift detection tolerates
+  the enable as a runtime-style addition while keeping the setup base intact.
+- When a setup `apply` or `switch` rewrites `config.toml` to the pure setup base,
+  the co-owned builder enable is dropped while the cache and profile persist.
+  `install-builder` then restores the base-config enable idempotently without
+  re-materializing the cache or invoking the official Codex plugin commands.
+- `builder-status` reports `config_enabled`; a target whose cache and profile are
+  current but whose base-config enable is absent now reports `incomplete` rather
+  than `installed`.
+
 ## [0.3.6] - 2026-07-18
 
 ### Changed
