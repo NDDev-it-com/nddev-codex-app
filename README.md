@@ -141,9 +141,12 @@ catalog setup. A target that was applied by an older manager build carries a
 stale `NDDEV-CODEX-SETUP.json` stamp and fails closed with `managed target is
 not the current canonical catalog setup; run apply --setup <id> before launch`.
 Re-run `apply --setup <id>` first: it re-stamps the setup to the current catalog
-and archives the prior managed state to a numbered backup slot -- which also
-drops the co-owned builder enable and any user `[mcp_servers.*]` entries -- after
-which `install-builder` restores the enable and you re-add any user MCP servers.
+and archives the prior managed state to a numbered backup slot. Approved co-owned
+overlays -- the builder enable, any user `[mcp_servers.*]` entries, and the Codex
+runtime's `[projects.*]` trust -- are carried onto the new base transactionally,
+so nothing has to be re-added by hand. An addition outside those approved
+namespaces (for example a `[sandbox_workspace_write]` that changes the managed
+posture) reads as drift and must be resolved before apply, switch, or launch.
 
 `install-builder` invokes the target-owned pinned Codex CLI's official
 `plugin marketplace add` and `plugin add` commands with bounded output and a
@@ -160,8 +163,9 @@ its exact prior bytes and modes;
 `AGENTS.md`, the setup stamp, unrelated plugins, and setup permissions remain
 unchanged.
 The profile and Codex-owned plugin cache are preserved across setup switches
-and setup removal; a setup apply or switch drops the base-config enable, and
-`install-builder` restores it without re-materializing the cache.
+and setup removal; a setup apply or switch also preserves the co-owned builder
+enable, so the builder stays default-on across a switch without re-running
+`install-builder`.
 
 The marketplace exposes skills for creating and checking every supported
 builder artifact family: skills, plugins, marketplaces, custom-agent TOML,
