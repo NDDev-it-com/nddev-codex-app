@@ -27,6 +27,7 @@ SEMVER_PATTERN = re.compile(
 )
 HOOK_EVENTS = (
     "SessionStart",
+    "SessionEnd",
     "SubagentStart",
     "PreToolUse",
     "PermissionRequest",
