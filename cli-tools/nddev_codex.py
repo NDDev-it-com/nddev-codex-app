@@ -920,6 +920,146 @@ def config_base_intact(current: bytes, base: bytes) -> bool:
     return True
 
 
+# Runtime/user tables the Codex runtime or the operator may legitimately add to
+# the co-owned config.toml after the managed base. Verified against Codex
+# rust-v0.144.6: the runtime persists project trust into ``[projects.*]``, plugin
+# enablement into ``[plugins.*]`` and marketplace metadata into
+# ``[marketplaces.*]`` (config_toml.rs / edit.rs, via toml_edit); ``[mcp_servers.*]``
+# is the operator's own MCP surface. Any other top-level table -- for example a
+# ``[sandbox_workspace_write]`` that would flip ``network_access`` on, or a
+# ``[model_providers.*]`` -- changes the managed permission posture, so it reads
+# as drift rather than a tolerated co-owned addition. Codex itself is
+# deny_unknown_fields and fails closed on duplicate keys/tables, so this check
+# makes the manager's notion of "clean" agree with what Codex will actually load.
+CONFIG_OVERLAY_TABLE_ROOTS = frozenset({"projects", "plugins", "marketplaces", "mcp_servers"})
+
+
+def _toml_table_root(body: str) -> str | None:
+    """Return the first dotted-key segment of a TOML table header body, or None
+    when it cannot be parsed. ``projects."/abs/path"`` -> ``projects``;
+    ``mcp_servers.name`` -> ``mcp_servers``; ``"quoted root"`` -> ``quoted root``."""
+    root: list[str] = []
+    quote = ""
+    for char in body.strip():
+        if quote:
+            if char == quote:
+                quote = ""
+            else:
+                root.append(char)
+            continue
+        if char in ('"', "'"):
+            quote = char
+            continue
+        if char == ".":
+            break
+        if char.isspace():
+            if root:
+                break
+            continue
+        root.append(char)
+    if quote:
+        return None
+    token = "".join(root)
+    return token or None
+
+
+def _toml_top_level(text: str) -> tuple[set[str], set[str]] | None:
+    """Walk a TOML document line-by-line and return
+    ``(top_level_bare_keys, table_roots)`` where top-level bare keys are those
+    appearing before any table header. Returns None on a malformed table header.
+    Line-based to match config_base_intact's parser-free contract (the managed
+    base and the tolerated overlays are simple key/value and single-line tables);
+    an unparseable shape fails closed as drift."""
+    bare_keys: set[str] = set()
+    table_roots: set[str] = set()
+    seen_table = False
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("["):
+            inner = line[1:]
+            if inner.startswith("["):
+                inner = inner[1:]
+            close = inner.find("]")
+            if close == -1:
+                return None
+            root = _toml_table_root(inner[:close])
+            if root is None:
+                return None
+            table_roots.add(root)
+            seen_table = True
+            continue
+        if not seen_table:
+            key = line.split("=", 1)[0].strip().strip('"').strip("'")
+            if key:
+                bare_keys.add(key)
+    return bare_keys, table_roots
+
+
+def config_managed_intact(current: bytes, base: bytes) -> bool:
+    """Return True when the current config.toml preserves the managed base *and*
+    every addition beyond it belongs to an approved co-owned namespace. This is
+    stricter than config_base_intact, which alone would read an injected
+    ``[sandbox_workspace_write]`` or an extra top-level key as clean even though
+    it silently changes the managed permission posture."""
+    if not config_base_intact(current, base):
+        return False
+    try:
+        current_text = current.decode("utf-8")
+        base_text = base.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    current_structure = _toml_top_level(current_text)
+    base_structure = _toml_top_level(base_text)
+    if current_structure is None or base_structure is None:
+        return False
+    current_keys, current_tables = current_structure
+    base_keys, base_tables = base_structure
+    if not current_tables <= (base_tables | CONFIG_OVERLAY_TABLE_ROOTS):
+        return False
+    if not current_keys <= base_keys:
+        return False
+    return True
+
+
+def preserve_config_overlays(current: bytes, new_base: bytes) -> bytes:
+    """Return the new managed base with the current config.toml's approved
+    co-owned overlay tables re-attached.
+
+    Codex persists project trust, plugin enablement and marketplace metadata into
+    config.toml at runtime (rust-v0.144.6, via toml_edit); the operator adds
+    ``[mcp_servers.*]``; NDDev enables the builder there too. Rewriting the file to
+    the pure setup base on update/switch -- the previous behaviour -- silently
+    discarded all of it. Because a setup base is only top-level keys (setups
+    declare no tables) and TOML requires top-level keys to precede any table, the
+    overlay tail is exactly the text from the first top-level table header onward,
+    so the split needs no record of the old base bytes. Callers must have already
+    confirmed the target is clean (config_managed_intact), which guarantees the
+    tail holds only approved namespaces; an undecodable file falls back to the
+    pure base."""
+    try:
+        text = current.decode("utf-8")
+    except UnicodeDecodeError:
+        return new_base
+    lines = text.splitlines(keepends=True)
+    tail_start: int | None = None
+    for index, raw in enumerate(lines):
+        if raw.lstrip().startswith("["):
+            tail_start = index
+            break
+    if tail_start is None:
+        return new_base
+    tail = "".join(lines[tail_start:])
+    base_text = new_base.decode("utf-8")
+    if not base_text.endswith("\n"):
+        base_text += "\n"
+    # Reproduce the single blank line the builder writer and Codex leave between
+    # the base and the first overlay table (byte-stable for an unchanged update).
+    separator = "" if tail.startswith("\n") else "\n"
+    return (base_text + separator + tail).encode("utf-8")
+
+
 def _config_base_intact_on_disk(target: Path, setup_id: object) -> bool:
     """Read the target's config.toml and confirm the managed base is intact,
     tolerating Codex's runtime additions. Any read/render failure is treated as
@@ -937,7 +1077,7 @@ def _config_base_intact_on_disk(target: Path, setup_id: object) -> bool:
         _, rendered = render_setup(setup_id)
     except (SystemExit, OSError, ValueError):
         return False
-    return config_base_intact(current, rendered["config.toml"])
+    return config_managed_intact(current, rendered["config.toml"])
 
 
 def inspect_target(target: Path) -> dict[str, Any]:
@@ -1036,7 +1176,7 @@ def require_effective_clean_managed(target: Path) -> dict[str, Any]:
         # trust additions as long as the managed base is intact. AGENTS.md and
         # the stamp stay byte-exact.
         if name == "config.toml":
-            intact = config_base_intact(actual_content, expected_content)
+            intact = config_managed_intact(actual_content, expected_content)
         else:
             intact = actual_content == expected_content
         if not intact:
@@ -2154,7 +2294,13 @@ def create_transaction_backup(
     return slot, desired, lease
 
 
-def apply_rendered(target: Path, setup_id: str, rendered: dict[str, bytes]) -> None:
+def apply_rendered(
+    target: Path,
+    setup_id: str,
+    rendered: dict[str, bytes],
+    *,
+    config_payload: bytes | None = None,
+) -> None:
     guard = current_target_guard(target)
     if guard is None:
         fail("apply requires an active anchored target lock")
@@ -2162,10 +2308,15 @@ def apply_rendered(target: Path, setup_id: str, rendered: dict[str, bytes]) -> N
     if expected is None:
         expected = capture_managed_snapshot(target)
     ensure_target_directory(target, create=True)
+    # The stamp digests the pure setup base (``rendered``); the on-disk config may
+    # additionally carry approved co-owned overlays via ``config_payload``, which
+    # inspect_target tolerates as long as config_managed_intact holds.
     desired: dict[str, bytes | None] = {
         **rendered,
         STAMP_NAME: stamp_bytes(target, setup_id, rendered),
     }
+    if config_payload is not None:
+        desired["config.toml"] = config_payload
     replace_managed_state(target, desired, expected)
 
 
@@ -2338,7 +2489,21 @@ def mutate_setup(target: Path, setup_id: str, command: str) -> dict[str, Any]:
             if backup_lease is not None:
                 validate_backup_before_target_mutation(backup_lease)
                 assert_managed_snapshot(target, before)
-            apply_rendered(target, setup_id, rendered)
+            # On update/switch the target is already clean-managed, so its config
+            # tail holds only approved co-owned overlays (Codex project trust, the
+            # builder enable, operator [mcp_servers.*]). Carry that tail onto the
+            # new base instead of discarding it. A fresh install has no tail.
+            config_payload: bytes | None = None
+            if plan["operation"] in {"update", "switch"}:
+                current_config, _ = read_target_file(
+                    target,
+                    "config.toml",
+                    f"managed path {target / 'config.toml'}",
+                    owner_only=False,
+                    max_bytes=MANAGED_PAYLOAD_MAX_BYTES,
+                )
+                config_payload = preserve_config_overlays(current_config, rendered["config.toml"])
+            apply_rendered(target, setup_id, rendered, config_payload=config_payload)
             final = require_clean_managed(target)
             reject_instruction_override(target, command)
             if final["setup_id"] != setup_id:
