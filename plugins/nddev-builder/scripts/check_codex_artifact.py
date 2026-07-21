@@ -59,6 +59,7 @@ READ_CHUNK_BYTES = 64 * 1024
 
 HOOK_EVENTS = {
     "SessionStart",
+    "SessionEnd",
     "SubagentStart",
     "PreToolUse",
     "PermissionRequest",
