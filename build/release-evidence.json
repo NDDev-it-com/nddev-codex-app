@@ -2,11 +2,11 @@
   "schema_version": 2,
   "module": {
     "repository": "NDDev-it-com/nddev-codex-app",
-    "setup_digest": "sha256:2b2229753100c69247aad0a04f6a2b4520c8bb4640fc3ece3b0a055c20a89f4e"
+    "setup_digest": "sha256:7691244dd1024567ccc2228a6a6a8b0a86feb11583c4872b123a3600c3a661df"
   },
   "harness": {
     "repository": "NDDev-it-com/nddev-harnesses",
-    "commit": "e93f861ce59969c6df5691be350aa02c7828a0b8"
+    "commit": "f780fef978b4e5dd4992dd313cd9ebbf4090e035"
   },
   "adapter": {
     "id": "codex",
@@ -29,8 +29,8 @@
     }
   ],
   "lanes": [],
-  "generated_at_utc": "2026-07-19T13:18:25Z",
-  "expires_at_utc": "2027-01-15T13:18:25Z",
+  "generated_at_utc": "2026-07-21T04:54:45Z",
+  "expires_at_utc": "2027-01-17T04:54:45Z",
   "promotion": {
     "decision": "pending",
     "waivers": []
