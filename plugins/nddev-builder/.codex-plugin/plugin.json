@@ -1,6 +1,6 @@
 {
   "name": "nddev-builder",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "description": "Create and validate native Codex skills, plugins, marketplaces, agents, hooks, MCP servers, app mappings, configuration, instructions, execpolicy rules, and managed requirements.",
   "author": {
     "name": "Danil Silantyev / NDDev",
@@ -31,6 +31,8 @@
       "Execute"
     ],
     "websiteURL": "https://github.com/NDDev-it-com/nddev-codex-app",
-    "defaultPrompt": "Use NDDev Builder to create or validate a native Codex artifact."
+    "defaultPrompt": [
+      "Use NDDev Builder to create or validate a native Codex artifact."
+    ]
   }
 }

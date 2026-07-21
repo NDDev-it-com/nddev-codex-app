@@ -890,7 +890,7 @@ def create_plugin(
             "developerName": author,
             "category": category,
             "capabilities": [],
-            "defaultPrompt": f"Use {title} for this task.",
+            "defaultPrompt": [f"Use {title} for this task."],
         },
     }
     if args.repository:

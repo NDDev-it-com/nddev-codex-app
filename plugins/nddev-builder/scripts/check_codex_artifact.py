@@ -2452,11 +2452,11 @@ def _validate_plugin_root(root: Path, *, budget: ScanBudget | None = None) -> Ar
         report.error("required-field", manifest_path, "plugin interface requires `capabilities`")
     else:
         _validate_string_list(report, manifest_path, capabilities, "interface.capabilities")
+    # The Codex runtime deserializes interface.defaultPrompt as
+    # Option<Vec<String>>, so a bare string is non-conforming and is rejected at
+    # load even though older examples used one. Require the array form.
     prompts = interface.get("defaultPrompt", interface.get("default_prompt"))
-    if isinstance(prompts, str):
-        if not prompts.strip():
-            report.error("default-prompt", manifest_path, "plugin default prompt must be non-empty")
-    elif isinstance(prompts, list):
+    if isinstance(prompts, list):
         if not 1 <= len(prompts) <= 3 or not all(
             isinstance(prompt, str) and prompt.strip() and len(prompt) <= 128 for prompt in prompts
         ):
@@ -2465,6 +2465,12 @@ def _validate_plugin_root(root: Path, *, budget: ScanBudget | None = None) -> Ar
                 manifest_path,
                 "plugin default prompts must contain one to three non-empty strings of at most 128 characters",
             )
+    elif isinstance(prompts, str):
+        report.error(
+            "default-prompt",
+            manifest_path,
+            "plugin interface `defaultPrompt` must be an array of one to three strings, not a bare string",
+        )
     else:
         report.error("required-field", manifest_path, "plugin interface requires a default prompt")
     for url_key in ("websiteURL", "privacyPolicyURL", "termsOfServiceURL"):
