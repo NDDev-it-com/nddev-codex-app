@@ -1,6 +1,6 @@
 {
   "name": "nddev-builder",
-  "version": "0.3.10",
+  "version": "0.1.0",
   "description": "Create and validate native Codex skills, plugins, marketplaces, agents, hooks, MCP servers, app mappings, configuration, instructions, execpolicy rules, and managed requirements.",
   "author": {
     "name": "Danil Silantyev / NDDev",
