@@ -54,23 +54,23 @@ RELEASE_METADATA_URL = (
     f"https://api.github.com/repos/openai/codex/releases/tags/{INSTALLER_RELEASE_TAG}"
 )
 PACKAGE_CHECKSUM_ASSET = "codex-package_SHA256SUMS"
-PACKAGE_CHECKSUM_SHA256 = "db72a7585c594e141201dea9fea37a3686d2668aaee603b96794712c8e394e0d"
+PACKAGE_CHECKSUM_SHA256 = "2692d126c2fc9bfe35041f28c771c4296dda43704fad6b4a1c8752987aaee806"
 PACKAGE_ASSETS = {
     "aarch64-apple-darwin": (
         "codex-package-aarch64-apple-darwin.tar.gz",
-        "bcbfa76650b6c581505aa5178c1e799d37ff12fc43a35ff16c90b97fa757e63f",
+        "ece937169d4c9e910d60826a6ea4ae7848a16c089403d122e70e7da4ac41ba34",
     ),
     "x86_64-apple-darwin": (
         "codex-package-x86_64-apple-darwin.tar.gz",
-        "daa3df37c8a041280f52a2198dbe7acbead64936b23f8b660edf9d886df5f9da",
+        "9d402c9ca814655fddc07b548d7086491c0afcebe1f746cdeba1045fd6f62646",
     ),
     "aarch64-unknown-linux-musl": (
         "codex-package-aarch64-unknown-linux-musl.tar.gz",
-        "b4359896bb548e02fdd72ea0cb3395fe8a88d20d3a4a421c4481e504f8e8927f",
+        "54f79a05aba6f9abf8ef988abcae8bf2fcefba20beb549b4ff2b3acdb2cb6f54",
     ),
     "x86_64-unknown-linux-musl": (
         "codex-package-x86_64-unknown-linux-musl.tar.gz",
-        "99ae48e4743da6c530ecd998ab2f7e66572c092f4190c88dca8236c07b06ce1d",
+        "71a28d362c96ac9829bf8203a2c71be451aeb726adb843167fdaf0eae8fe7dd9",
     ),
 }
 INSTALLER_MAX_BYTES = 64 * 1024
