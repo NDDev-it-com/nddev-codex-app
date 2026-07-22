@@ -42,7 +42,7 @@ OWNER_FILE_MODE = 0o600
 OWNER_DIRECTORY_MODE = 0o700
 METADATA_MAX_BYTES = 256 * 1024
 MANAGED_PAYLOAD_MAX_BYTES = 8 * 1024 * 1024
-TESTED_CODEX_VERSION = "0.144.6"
+TESTED_CODEX_VERSION = "0.145.0"
 INSTALLER_RELEASE_TAG = f"rust-v{TESTED_CODEX_VERSION}"
 INSTALLER_NAME = "install.sh"
 INSTALLER_URL = (
@@ -922,7 +922,7 @@ def config_base_intact(current: bytes, base: bytes) -> bool:
 
 # Runtime/user tables the Codex runtime or the operator may legitimately add to
 # the co-owned config.toml after the managed base. Verified against Codex
-# rust-v0.144.6: the runtime persists project trust into ``[projects.*]``, plugin
+# rust-v0.145.0: the runtime persists project trust into ``[projects.*]``, plugin
 # enablement into ``[plugins.*]`` and marketplace metadata into
 # ``[marketplaces.*]`` (config_toml.rs / edit.rs, via toml_edit); ``[mcp_servers.*]``
 # is the operator's own MCP surface. Any other top-level table -- for example a
@@ -1028,7 +1028,7 @@ def preserve_config_overlays(current: bytes, new_base: bytes) -> bytes:
     co-owned overlay tables re-attached.
 
     Codex persists project trust, plugin enablement and marketplace metadata into
-    config.toml at runtime (rust-v0.144.6, via toml_edit); the operator adds
+    config.toml at runtime (rust-v0.145.0, via toml_edit); the operator adds
     ``[mcp_servers.*]``; NDDev enables the builder there too. Rewriting the file to
     the pure setup base on update/switch -- the previous behaviour -- silently
     discarded all of it. Because a setup base is only top-level keys (setups

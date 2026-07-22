@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented here.
 
+## [0.3.13] - 2026-07-22
+
+### Changed
+
+- Tested Codex CLI advanced to the official `rust-v0.145.0` release. The
+  `install.sh` standalone installer is byte-identical to `rust-v0.144.6`, so the
+  pinned installer asset and its verification are unchanged.
+- Shared reusable CI workflows repinned to `ci-workflows` release `0.12.0`
+  (commit `2ccb80e`).
+- `nddev-builder` plugin advanced to `0.3.10` to reflect the config-checker
+  content change below.
+
+### Removed
+
+- The `config` checker no longer accepts `model_supports_reasoning_summaries` as
+  a top-level key, matching its removal from the Codex `0.145.0` ConfigToml
+  schema (top-level property set 94 -> 93). A config that still sets it now reads
+  as drift, exactly as Codex `0.145.0` itself rejects it.
+
 ## [0.3.12] - 2026-07-19
 
 ### Added

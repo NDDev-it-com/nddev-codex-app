@@ -8,7 +8,7 @@ the independently installable `nddev-builder` Codex marketplace.
 
 The current OpenAI desktop product is the ChatGPT app for macOS and Windows. It
 contains separate Chat plus selectable ChatGPT Work and Codex modes. Codex CLI
-`0.144.6` still implements `codex app` through legacy `Codex.app`/`Codex.dmg`
+`0.145.0` still implements `codex app` through legacy `Codex.app`/`Codex.dmg`
 packaging. This module does not manage either desktop bundle directly; on
 macOS, `desktop` is only a narrow delegation to that upstream command.
 
@@ -42,7 +42,7 @@ or defaults to `~/.codex`.
 - Python directory-FD and no-follow filesystem operations for mutations
 - an absolute target whose parent already exists
 
-This build installs and requires Codex CLI `0.144.6`. The configuration format
+This build installs and requires Codex CLI `0.145.0`. The configuration format
 remains compatible with Codex CLI `0.138.0` or newer.
 
 ## Install the official Codex CLI
@@ -56,7 +56,7 @@ python3 cli-tools/nddev_codex.py update-cli \
   --target /absolute/path/to/codex-home
 ```
 
-Install and update first download the pinned OpenAI `rust-v0.144.6`
+Install and update first download the pinned OpenAI `rust-v0.145.0`
 `install.sh` asset into a temporary directory, enforce its exact size and
 SHA-256, and invoke it without a shell pipeline. That verified official
 installer then downloads the pinned checksum manifest and host package and
@@ -72,7 +72,7 @@ symlinks, compatibility entrypoint, code-mode host, bundled ripgrep, Linux
 sandbox helper, executable ownership/modes, bounded `codex --version` output,
 the official temporary-directory PATH-alias diagnostic when present, and exact
 canonical stdout version. `install-cli` and `update-cli` are idempotent when
-`0.144.6` is already current. A different installed version must be advanced
+`0.145.0` is already current. A different installed version must be advanced
 with `update-cli`.
 
 `software-status` is non-mutating and reports `installed`, `current`, `version`,
@@ -197,7 +197,7 @@ Both commands require the exact current target-owned CLI and never resolve
 setup and forwards Codex arguments unchanged. `desktop` invokes exactly
 `codex app` with no argument, or with one validated absolute workspace;
 arbitrary upstream installer/source flags are not exposed. It does not require
-a managed setup because Codex CLI `0.144.6` passes only a workspace URL to the
+a managed setup because Codex CLI `0.145.0` passes only a workspace URL to the
 GUI: setting `CODEX_HOME` for the bridge process is not a guarantee that the
 desktop application will inherit the selected target configuration. Both keep
 standard I/O attached and return the child exit code.
