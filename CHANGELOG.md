@@ -2,7 +2,7 @@
 
 All notable changes to `nddev-codex-app` are documented here.
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-07-24
 
 Pre-release baseline. Version scheme realigned across the nddev setup modules:
 `0.1.0` reflects that the `nddev-builder` tooling — the setup system for
